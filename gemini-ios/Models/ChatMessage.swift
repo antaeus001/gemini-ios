@@ -2,12 +2,6 @@ import Foundation
 import SwiftUI
 import UIKit
 
-// 枚举定义消息角色
-enum ChatRole: Equatable {
-    case user
-    case assistant
-}
-
 // 枚举定义消息内容类型
 enum ChatContentType: Equatable {
     case text(String)
@@ -35,32 +29,6 @@ enum ChatContentType: Equatable {
             return true
         default:
             // 不同类型的内容不相等
-            return false
-        }
-    }
-}
-
-// 混合内容项
-enum MixedContentItem: Identifiable, Equatable {
-    case text(String)
-    case image(UIImage)
-    
-    var id: UUID {
-        UUID()
-    }
-    
-    static func == (lhs: MixedContentItem, rhs: MixedContentItem) -> Bool {
-        switch (lhs, rhs) {
-        case (.text(let lhsText), .text(let rhsText)):
-            return lhsText == rhsText
-        case (.image(let lhsImage), .image(let rhsImage)):
-            // 由于UIImage没有原生实现Equatable，我们可以比较它们的pngData
-            if let lhsData = lhsImage.pngData(), let rhsData = rhsImage.pngData() {
-                return lhsData == rhsData
-            }
-            return false
-        default:
-            // 不同类型的项目不相等
             return false
         }
     }

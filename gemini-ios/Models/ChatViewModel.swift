@@ -9,6 +9,7 @@ class ChatViewModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var error: String? = nil
     @Published var currentlyGeneratingMessage: ChatMessage? = nil
+    @Published var userImage: UIImage? = nil
     
     private let geminiService = GeminiService()
     
@@ -46,8 +47,112 @@ class ChatViewModel: ObservableObject {
         }
     }
     
+    // 设置用户选择的图片
+    func setUserImage(_ image: UIImage) {
+        self.userImage = image
+        
+        // 添加图片到聊天界面
+        let userMessage = ChatMessage(role: .user, content: .image(image))
+        messages.append(userMessage)
+        objectWillChange.send()
+    }
+    
+    // 发送带图片的消息
+    func sendMessageWithImage(prompt: String) async {
+        guard let image = userImage else { return }
+        
+        // 添加用户文本消息
+        if !prompt.isEmpty {
+            let userTextMessage = ChatMessage(role: .user, content: .text(prompt))
+            messages.append(userTextMessage)
+        }
+        
+        // 创建一个初始的助手消息，使用空的混合内容数组
+        let initialAssistantMessage = ChatMessage(role: .assistant, content: .mixedContent([]))
+        initialAssistantMessage.isGenerating = true
+        currentlyGeneratingMessage = initialAssistantMessage
+        messages.append(initialAssistantMessage)
+        objectWillChange.send()
+        
+        isLoading = true
+        error = nil
+        
+        do {
+            // 重置GeminiService的对话历史
+            geminiService.clearChatHistory()
+            
+            // 保存接收到的内容项
+            var mixedItems: [MixedContentItem] = []
+            
+            // 使用流式API发送带图片的消息
+            try await geminiService.generateContentWithImage(prompt: prompt, image: image) { [weak self] contentItem in
+                guard let self = self else { return }
+                
+                if case .text(let newText) = contentItem.type {
+                    print("接收到文本: \(newText)")
+                    
+                    // 添加文本内容项
+                    mixedItems.append(.text(newText))
+                    
+                    // 更新消息
+                    self.updateGeneratingMessageWithItems(mixedItems)
+                }
+                
+                if case .image(let imageData) = contentItem.type, let image = UIImage(data: imageData) {
+                    // 检查图像是否有效
+                    if image.size.width > 10 && image.size.height > 10 {
+                        print("接收到有效图像: \(image.size.width) x \(image.size.height)")
+                        
+                        // 添加图像内容项
+                        mixedItems.append(.image(image))
+                        
+                        // 更新消息
+                        self.updateGeneratingMessageWithItems(mixedItems)
+                    } else {
+                        print("接收到的图像尺寸太小: \(image.size.width) x \(image.size.height)")
+                    }
+                }
+            }
+            
+            // 完成生成后，设置为非生成状态
+            if let index = messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id }) {
+                messages[index].isGenerating = false
+                objectWillChange.send()
+            }
+            currentlyGeneratingMessage = nil
+            
+            // 清除用户图片
+            userImage = nil
+            
+        } catch {
+            self.error = error.localizedDescription
+            print("API调用错误: \(error.localizedDescription)")
+            
+            // 移除正在生成的空消息
+            if let lastMessage = messages.last, lastMessage.id == currentlyGeneratingMessage?.id {
+                if case .mixedContent(let items) = lastMessage.content, items.isEmpty {
+                    messages.removeLast()
+                }
+            }
+            
+            // 添加一个友好的错误消息
+            let assistantMessage = ChatMessage(role: .assistant, content: .text("很抱歉，处理您的请求时遇到问题。错误信息：\(error.localizedDescription)"))
+            messages.append(assistantMessage)
+            currentlyGeneratingMessage = nil
+            objectWillChange.send()
+        }
+        
+        isLoading = false
+    }
+    
     // 通用的生成内容聊天方法
     func startGenerationChat(prompt: String) async {
+        // 如果有用户图片，则调用带图片的方法
+        if userImage != nil {
+            await sendMessageWithImage(prompt: prompt)
+            return
+        }
+        
         // 清除现有消息
         messages.removeAll()
         
@@ -152,6 +257,13 @@ class ChatViewModel: ObservableObject {
     // 发送消息
     func sendMessage() async {
         guard !inputMessage.isEmpty else { return }
+        
+        // 如果有用户图片，则调用带图片的方法
+        if userImage != nil {
+            await sendMessageWithImage(prompt: inputMessage)
+            inputMessage = ""
+            return
+        }
         
         let messageToSend = inputMessage
         inputMessage = ""

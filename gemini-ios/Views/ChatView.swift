@@ -1,11 +1,13 @@
 import SwiftUI
 import UIKit
+import PhotosUI
 
 struct ChatView: View {
     @StateObject private var viewModel = ChatViewModel()
     @State private var showingExamples = false
     @State private var imagePickerVisible = false
     @State private var selectedImage: UIImage?
+    @State private var photoItem: PhotosPickerItem?
     
     func scrollToBottom() {
         if let lastMessage = viewModel.messages.last {
@@ -42,6 +44,31 @@ struct ChatView: View {
                 }
             }
             
+            // 如果有选择的图片，显示预览和提示
+            if let userImage = viewModel.userImage {
+                HStack {
+                    Image(uiImage: userImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 60)
+                        .cornerRadius(8)
+                    
+                    Text("请输入提示词来编辑此图片")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    
+                    Spacer()
+                    
+                    Button(action: {
+                        viewModel.userImage = nil
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.gray)
+                    }
+                }
+                .padding(.horizontal)
+            }
+            
             // 显示错误信息（如果有）
             if let error = viewModel.error {
                 Text(error)
@@ -51,6 +78,27 @@ struct ChatView: View {
             
             // 输入区域
             HStack {
+                // 图片选择按钮
+                PhotosPicker(selection: $photoItem, matching: .images) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 20))
+                        .foregroundColor(.blue)
+                }
+                .disabled(viewModel.isLoading)
+                .onChange(of: photoItem) { _, newItem in
+                    if let newItem {
+                        Task {
+                            if let data = try? await newItem.loadTransferable(type: Data.self),
+                               let image = UIImage(data: data) {
+                                await MainActor.run {
+                                    viewModel.setUserImage(image)
+                                    photoItem = nil
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 // 消息输入框
                 TextField("想要生成什么？", text: $viewModel.inputMessage)
                     .padding(10)
@@ -73,7 +121,7 @@ struct ChatView: View {
                             .frame(width: 30, height: 30)
                             .foregroundColor(.blue)
                     }
-                    .disabled(viewModel.inputMessage.isEmpty)
+                    .disabled(viewModel.inputMessage.isEmpty && viewModel.userImage == nil)
                 }
             }
             .padding()
@@ -131,7 +179,7 @@ struct MessageView: View {
                 
                 case .image(let image):
                     VStack(alignment: .center, spacing: 4) {
-                        Text("生成的图片 (\(Int(image.size.width))x\(Int(image.size.height)))")
+                        Text(message.role == .user ? "上传的图片" : "生成的图片")
                             .font(.caption)
                             .foregroundColor(.secondary)
                         
@@ -153,7 +201,7 @@ struct MessageView: View {
                     }
                     .frame(maxWidth: 300)
                     .padding(12)
-                    .background(Color(.systemGray6))
+                    .background(message.role == .user ? Color.blue.opacity(0.2) : Color(.systemGray6))
                     .cornerRadius(16)
                     .onAppear {
                         print("显示图像消息，图像尺寸: \(image.size.width) x \(image.size.height)")
