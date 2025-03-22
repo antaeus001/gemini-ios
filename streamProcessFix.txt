@@ -1,0 +1,13 @@
+            // 解析并处理JSON数组
+            do {
+                if let jsonArray = try JSONSerialization.jsonObject(with: buffer) as? [[String: Any]] {
+                    print("成功解析JSON数组，包含 \(jsonArray.count) 个对象")
+                    for (index, json) in jsonArray.enumerated() {
+                        print("处理JSON数组中的对象 #\(index+1)")
+                        await processStreamChunk(json: json, modelParts: &modelParts)
+                    }
+                    buffer = Data()
+                }
+            } catch {
+                print("尝试解析JSON数组失败，可能格式不是数组: \(error.localizedDescription)")
+            }

@@ -1,0 +1,249 @@
+import Foundation
+import SwiftUI
+import UIKit
+
+@MainActor
+class ChatViewModel: ObservableObject {
+    @Published var messages: [ChatMessage] = []
+    @Published var inputMessage: String = ""
+    @Published var isLoading: Bool = false
+    @Published var error: String? = nil
+    @Published var currentlyGeneratingMessage: ChatMessage? = nil
+    
+    private let geminiService = GeminiService()
+    
+    init() {
+        // 在初始化时自动启动欢迎对话
+        startWelcomeChat()
+    }
+    
+    // 启动欢迎对话
+    func startWelcomeChat() {
+        let welcomePrompt = "你好，我是基于Gemini 2.0 Flash的AI助手。我可以帮你生成文本和图像。请告诉我你想创建什么？"
+        
+        let assistantMessage = ChatMessage(role: .assistant, content: .text(welcomePrompt))
+        messages.append(assistantMessage)
+    }
+    
+    // 启动图像编辑聊天
+    func startImageEditChat(prompt: String) {
+        Task {
+            await startGenerationChat(prompt: prompt)
+        }
+    }
+    
+    // 启动故事生成聊天
+    func startStoryGenerationChat(prompt: String) {
+        Task {
+            await startGenerationChat(prompt: prompt)
+        }
+    }
+    
+    // 启动设计生成聊天
+    func startDesignGenerationChat(prompt: String) {
+        Task {
+            await startGenerationChat(prompt: prompt)
+        }
+    }
+    
+    // 通用的生成内容聊天方法
+    func startGenerationChat(prompt: String) async {
+        // 清除现有消息
+        messages.removeAll()
+        
+        // 添加用户消息到UI
+        let userMessage = ChatMessage(role: .user, content: .text(prompt))
+        messages.append(userMessage)
+        
+        // 创建一个初始的助手消息，使用空的混合内容数组
+        let initialAssistantMessage = ChatMessage(role: .assistant, content: .mixedContent([]))
+        initialAssistantMessage.isGenerating = true
+        currentlyGeneratingMessage = initialAssistantMessage
+        messages.append(initialAssistantMessage)
+        
+        isLoading = true
+        error = nil
+        
+        do {
+            // 重置GeminiService的对话历史
+            geminiService.clearChatHistory()
+            
+            // 保存接收到的内容项
+            var mixedItems: [MixedContentItem] = []
+            
+            // 使用流式API
+            try await geminiService.generateContent(prompt: prompt) { [weak self] contentItem in
+                guard let self = self else { return }
+                
+                if case .text(let newText) = contentItem.type {
+                    print("接收到文本: \(newText.prefix(30))...")
+                    
+                    // 添加文本内容项
+                    mixedItems.append(.text(newText))
+                    
+                    // 更新消息
+                    self.updateGeneratingMessageWithItems(mixedItems)
+                }
+                
+                if let imageData = imageData, let image = UIImage(data: imageData) {
+                    // 检查图像是否有效
+                    if image.size.width > 10 && image.size.height > 10 {
+                        print("接收到有效图像: \(image.size.width) x \(image.size.height)")
+                        
+                        // 添加图像内容项
+                        mixedItems.append(.image(image))
+                        
+                        // 更新消息
+                        self.updateGeneratingMessageWithItems(mixedItems)
+                    } else {
+                        print("接收到的图像尺寸太小: \(image.size.width) x \(image.size.height)")
+                    }
+                }
+            }
+            
+            // 完成生成后，设置为非生成状态
+            if let index = messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id }) {
+                messages[index].isGenerating = false
+            }
+            currentlyGeneratingMessage = nil
+            
+        } catch {
+            self.error = error.localizedDescription
+            print("API调用错误: \(error.localizedDescription)")
+            
+            // 移除正在生成的空消息
+            if let lastMessage = messages.last, lastMessage.id == currentlyGeneratingMessage?.id {
+                if case .mixedContent(let items) = lastMessage.content, items.isEmpty {
+                    messages.removeLast()
+                }
+            }
+            
+            // 添加一个友好的错误消息
+            let assistantMessage = ChatMessage(role: .assistant, content: .text("很抱歉，处理您的请求时遇到问题。错误信息：\(error.localizedDescription)"))
+            messages.append(assistantMessage)
+            currentlyGeneratingMessage = nil
+        }
+        
+        isLoading = false
+    }
+    
+    // 更新当前生成的消息
+    private func updateGeneratingMessageWithItems(_ items: [MixedContentItem]) {
+        guard let index = messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id }) else {
+            print("未找到当前生成的消息，无法更新")
+            return
+        }
+        
+        // 直接用当前收集的所有项目更新消息
+        messages[index].content = .mixedContent(items)
+        
+        // 更新引用
+        currentlyGeneratingMessage = messages[index]
+        
+        print("更新消息[ID: \(currentlyGeneratingMessage?.id.uuidString ?? "nil")]，当前项数: \(items.count)")
+    }
+    
+    // 发送消息
+    func sendMessage() async {
+        guard !inputMessage.isEmpty else { return }
+        
+        let messageToSend = inputMessage
+        inputMessage = ""
+        
+        // 添加用户消息
+        let userMessage = ChatMessage(role: .user, content: .text(messageToSend))
+        messages.append(userMessage)
+        
+        // 创建一个初始的助手消息，使用空的混合内容数组
+        let initialAssistantMessage = ChatMessage(role: .assistant, content: .mixedContent([]))
+        initialAssistantMessage.isGenerating = true
+        currentlyGeneratingMessage = initialAssistantMessage
+        messages.append(initialAssistantMessage)
+        
+        isLoading = true
+        error = nil
+        
+        do {
+            // 保存接收到的内容项
+            var mixedItems: [MixedContentItem] = []
+            
+            // 使用流式API
+            try await geminiService.generateContent(prompt: messageToSend) { [weak self] contentItem in
+                guard let self = self else { return }
+                
+                if case .text(let newText) = contentItem.type {
+                    // 添加文本内容项
+                    mixedItems.append(.text(newText))
+                    
+                    // 更新消息
+                    self.updateGeneratingMessageWithItems(mixedItems)
+                }
+                
+                if let imageData = imageData, let image = UIImage(data: imageData) {
+                    // 检查图像是否有效
+                    if image.size.width > 10 && image.size.height > 10 {
+                        // 添加图像内容项
+                        mixedItems.append(.image(image))
+                        
+                        // 更新消息
+                        self.updateGeneratingMessageWithItems(mixedItems)
+                    }
+                }
+            }
+            
+            // 完成生成后，设置为非生成状态
+            if let index = messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id }) {
+                messages[index].isGenerating = false
+            }
+            currentlyGeneratingMessage = nil
+            
+        } catch {
+            self.error = error.localizedDescription
+            print("API调用错误: \(error.localizedDescription)")
+            
+            // 移除正在生成的空消息
+            if let lastMessage = messages.last, lastMessage.id == currentlyGeneratingMessage?.id {
+                if case .mixedContent(let items) = lastMessage.content, items.isEmpty {
+                    messages.removeLast()
+                }
+            }
+            
+            // 添加一个友好的错误消息
+            let assistantMessage = ChatMessage(role: .assistant, content: .text("很抱歉，处理您的请求时遇到问题。错误信息：\(error.localizedDescription)"))
+            messages.append(assistantMessage)
+            currentlyGeneratingMessage = nil
+        }
+        
+        isLoading = false
+    }
+    
+    // 使用预设的示例提示
+    func useExamplePrompt(type: ExamplePromptType) {
+        switch type {
+        case .imageEdit:
+            let prompt = "为羊角面包添加一些巧克力涂层。"
+            startImageEditChat(prompt: prompt)
+            
+        case .storyGeneration:
+            let prompt = "生成一个关于白色小山羊在农场冒险的故事，采用3D卡通动画风格。为每个场景生成一张图片。"
+            startStoryGenerationChat(prompt: prompt)
+            
+        case .designGeneration:
+            let prompt = """
+            生成一个生日贺卡设计，带有美丽的花卉装饰。文字应该很大，内容为：
+            "生日快乐！
+            祝你的一天充满欢乐、笑声和你最喜欢的一切。
+            愿来年成为你最美好的一年，带给你激动人心的冒险和美妙的回忆。
+            为你干杯！"
+            """
+            startDesignGenerationChat(prompt: prompt)
+        }
+    }
+}
+
+// 示例提示类型
+enum ExamplePromptType {
+    case imageEdit
+    case storyGeneration
+    case designGeneration
+}
