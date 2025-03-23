@@ -1,6 +1,43 @@
 import SwiftUI
 import UIKit
 import PhotosUI
+import MarkdownUI
+
+// 自定义Markdown主题
+extension Theme {
+    static var custom: Theme {
+        Theme()
+            .code {
+                FontFamilyVariant(.monospaced)
+                FontWeight(.medium)
+                BackgroundColor(Color(.systemGray6))
+            }
+            .heading1 { configuration in
+                configuration.label
+                    .markdownTextStyle {
+                        FontWeight(.bold)
+                        FontSize(.em(1.8))
+                    }
+            }
+            .heading2 { configuration in
+                configuration.label
+                    .markdownTextStyle {
+                        FontWeight(.semibold)
+                        FontSize(.em(1.5))
+                    }
+            }
+            .heading3 { configuration in
+                configuration.label
+                    .markdownTextStyle {
+                        FontWeight(.medium)
+                        FontSize(.em(1.2))
+                    }
+            }
+            .link {
+                ForegroundColor(.blue)
+            }
+    }
+}
 
 struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
@@ -8,6 +45,7 @@ struct ChatView: View {
     @State private var imagePickerVisible = false
     @State private var selectedImage: UIImage?
     @State private var photoItem: PhotosPickerItem?
+    @State private var messageCounter: Int = 0
     
     // 修复MainActor初始化问题
     init(viewModel: ChatViewModel? = nil) {
@@ -40,14 +78,24 @@ struct ChatView: View {
                         ForEach(viewModel.messages) { message in
                             MessageView(message: message)
                                 .id(message.id)
+                                .onChange(of: message.content) { _, _ in
+                                    DispatchQueue.main.async {
+                                        // 强制刷新整个UI
+                                        self.messageCounter += 1
+                                    }
+                                }
                         }
                     }
                     .padding(.horizontal)
+                    .id(messageCounter) // 使用计数器强制刷新
                 }
                 .background(Color(.systemBackground))
                 .shadow(radius: 5)
                 .padding()
                 .onChange(of: viewModel.messages.count) { _, _ in
+                    scrollToBottom()
+                }
+                .onChange(of: messageCounter) { _, _ in
                     scrollToBottom()
                 }
                 .onAppear {
@@ -167,7 +215,9 @@ struct ChatView: View {
 
 // 消息视图
 struct MessageView: View {
-    @ObservedObject var message: ChatMessage
+    let message: ChatMessage
+    @State private var imageScale: CGFloat = 1.0
+    @State private var viewId = UUID() // 添加唯一ID用于强制刷新
     
     var body: some View {
         HStack {
@@ -175,96 +225,126 @@ struct MessageView: View {
                 Spacer()
             }
             
-            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 8) {
-                // 根据消息内容类型显示不同的视图
+            VStack(alignment: message.role == .user ? .trailing : .leading) {
+                // 依据消息角色决定头像显示
+                if message.role != .user {
+                    HStack {
+                        Image(systemName: "brain")
+                            .font(.system(size: 16))
+                            .foregroundColor(.white)
+                            .padding(8)
+                            .background(Circle().fill(Color.purple))
+                        
+                        Text("Gemini")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        
+                        Spacer()
+                    }
+                    .padding(.bottom, 4)
+                }
+                
                 switch message.content {
                 case .text(let text):
-                    Text(text)
-                        .padding(12)
-                        .background(message.role == .user ? Color.blue : Color(.systemGray5))
-                        .foregroundColor(message.role == .user ? .white : .primary)
-                        .cornerRadius(16)
+                    if text.contains("```") || text.contains("#") || text.contains("*") || text.contains("[") {
+                        // 富文本内容，使用Markdown渲染
+                        Markdown(text)
+                            .textSelection(.enabled)
+                            .markdownTheme(Theme.custom)
+                            .padding(10)
+                            .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
+                            .cornerRadius(10)
+                    } else {
+                        // 普通文本
+                        Text(text)
+                            .padding(10)
+                            .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
+                            .cornerRadius(10)
+                            .textSelection(.enabled)
+                    }
+                    
+                case .markdown(let markdownText):
+                    // 直接使用Markdown组件渲染
+                    Markdown(markdownText)
                         .textSelection(.enabled)
-                        .id("text-\(message.id)-\(text.hashValue)") // 添加唯一ID以便内容更新时视图刷新
-                        .onAppear {
-                            print("显示文本消息: \(String(text.prefix(20)))...")
-                        }
-                
+                        .markdownTheme(Theme.custom)
+                        .padding(10)
+                        .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
+                        .cornerRadius(10)
+                    
                 case .image(let image):
-                    VStack(alignment: .center, spacing: 4) {
-                        Text(message.role == .user ? "上传的图片" : "生成的图片")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        GeometryReader { geo in
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: min(geo.size.width * 0.9, 300), height: 300)
-                                .cornerRadius(12)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                                )
-                                .onAppear {
-                                    print("显示图像: \(image.size.width) x \(image.size.height)")
-                                }
-                        }
-                        .frame(height: 300)
-                    }
-                    .frame(maxWidth: 300)
-                    .padding(12)
-                    .background(message.role == .user ? Color.blue.opacity(0.2) : Color(.systemGray6))
-                    .cornerRadius(16)
-                    .onAppear {
-                        print("显示图像消息，图像尺寸: \(image.size.width) x \(image.size.height)")
-                    }
-                
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 300, maxHeight: 300)
+                        .cornerRadius(10)
+                        .scaleEffect(imageScale)
+                        .gesture(MagnificationGesture()
+                            .onChanged { value in
+                                self.imageScale = value
+                            }
+                            .onEnded { _ in
+                                self.imageScale = 1.0
+                            }
+                        )
+                    
                 case .mixedContent(let items):
-                    VStack(alignment: .leading, spacing: 12) {
-                        if items.isEmpty && message.isGenerating {
-                            // 显示正在生成的指示器
-                            TypingIndicator()
-                                .frame(width: 40, height: 20)
-                                .padding(.vertical, 4)
-                        } else {
-                            ForEach(items, id: \.id) { item in
-                                switch item {
-                                case .text(let text):
-                                    Text(text)
-                                        .padding([.horizontal, .top], 8)
+                    VStack(alignment: .leading, spacing: 10) {
+                        // 分别处理不同类型的内容项
+                        ForEach(items) { item in
+                            switch item {
+                            case .text(let text, _):
+                                if text.contains("```") || text.contains("#") || text.contains("*") || text.contains("[") {
+                                    // 富文本内容，使用Markdown渲染
+                                    Markdown(text)
                                         .textSelection(.enabled)
-                                
-                                case .image(let image):
-                                    VStack(alignment: .center, spacing: 4) {
-                                        Text("生成的图片")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                        
-                                        GeometryReader { geo in
-                                            Image(uiImage: image)
-                                                .resizable()
-                                                .scaledToFit()
-                                                .frame(width: min(geo.size.width * 0.9, 300), height: 300)
-                                                .cornerRadius(12)
-                                                .overlay(
-                                                    RoundedRectangle(cornerRadius: 12)
-                                                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                                                )
-                                        }
-                                        .frame(height: 300)
-                                    }
-                                    .frame(maxWidth: 300)
+                                        .markdownTheme(Theme.custom)
+                                        .padding(4)
+                                } else {
+                                    // 普通文本
+                                    Text(text)
+                                        .padding(4)
+                                        .textSelection(.enabled)
                                 }
+                                
+                            case .markdown(let markdownText, _):
+                                // Markdown内容
+                                Markdown(markdownText)
+                                    .textSelection(.enabled)
+                                    .markdownTheme(Theme.custom)
+                                    .padding(4)
+                                
+                            case .image(let image, _):
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(maxWidth: 300, maxHeight: 300)
+                                    .cornerRadius(10)
                             }
                         }
                     }
-                    .padding(12)
-                    .background(Color(.systemGray5))
-                    .cornerRadius(16)
+                    .padding(10)
+                    .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
+                    .cornerRadius(10)
+                }
+                
+                // 如果消息处于生成中状态，显示指示器
+                if message.isGenerating {
+                    HStack {
+                        Text("正在生成...")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        TypingIndicator()
+                    }
+                    .padding(.top, 4)
                 }
             }
-            .frame(maxWidth: UIScreen.main.bounds.width * 0.85, alignment: message.role == .user ? .trailing : .leading)
+            .frame(maxWidth: UIScreen.main.bounds.width * 0.8, alignment: message.role == .user ? .trailing : .leading)
+            .onChange(of: message.content) { _, _ in
+                // 当内容变化时强制更新视图
+                viewId = UUID()
+            }
+            .id(viewId) // 使用viewId强制刷新
             
             if message.role == .assistant {
                 Spacer()

@@ -5,6 +5,7 @@ import UIKit
 enum ContentItemType {
     case text(String)
     case image(Data)
+    case markdown(String)
 }
 
 // 内容项结构
@@ -94,6 +95,8 @@ class GeminiService {
     
     // 处理API响应数据
     private func processResponseData(_ responseDict: [String: Any], modelParts: inout [[String: Any]]) async {
+        print("收到响应数据: \(responseDict)")
+        
         guard let candidates = responseDict["candidates"] as? [[String: Any]],
               candidates.count > 0,
               let content = candidates[0]["content"] as? [String: Any],
@@ -109,25 +112,76 @@ class GeminiService {
             
             // 处理文本内容
             if let text = part["text"] as? String, !text.isEmpty {
-                // 检查是否有当前内容项，并且最后一个是文本类型
-                if let lastIndex = currentContentItems.indices.last,
-                   case .text(let lastText) = currentContentItems[lastIndex].type,
-                   !text.hasPrefix("\n") && lastText.count > 0 {
-                    // 将新文本追加到最后一个文本内容项的记录中
-                    let updatedText = lastText + text
-                    currentContentItems[lastIndex] = ContentItem(type: .text(updatedText), timestamp: Date())
-                    
-                    // 只发送增量的文本给UI更新
-                    let incrementalItem = ContentItem(type: .text(text), timestamp: Date(), isIncremental: true)
-                    await MainActor.run {
-                        self.currentUpdateHandler?(incrementalItem)
+                // 检查文本是否包含Markdown格式
+                let markdownPatterns = [
+                    "^#+ ", // 标题
+                    "```", // 代码块
+                    "`[^`]+`", // 行内代码
+                    "\\*\\*[^\\*]+\\*\\*", // 粗体
+                    "_[^_]+_", // 斜体
+                    "\\*[^\\*]+\\*", // 斜体（另一种表示）
+                    "^>", // 引用
+                    "^- ", // 无序列表
+                    "^\\d+\\. ", // 有序列表
+                    "\\[.+\\]\\(.+\\)", // 链接
+                    "!\\[.+\\]\\(.+\\)", // 图片
+                    "\\|[^\\|]+\\|", // 表格
+                    "^----*$" // 分隔线
+                ]
+                
+                // 使用正则表达式检查文本是否包含Markdown格式
+                let containsMarkdown = markdownPatterns.contains { pattern in
+                    if let regex = try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines]) {
+                        let range = NSRange(location: 0, length: text.utf16.count)
+                        return regex.firstMatch(in: text, options: [], range: range) != nil
+                    }
+                    return false
+                }
+                
+                if containsMarkdown {
+                    // 如果包含Markdown，使用markdown类型处理
+                    // 检查是否有当前内容项，并且最后一个是markdown类型
+                    if let lastIndex = currentContentItems.indices.last,
+                       case .markdown(let lastText) = currentContentItems[lastIndex].type,
+                       !text.hasPrefix("\n") && lastText.count > 0 {
+                        // 将新文本追加到最后一个markdown内容项的记录中
+                        let updatedText = lastText + text
+                        currentContentItems[lastIndex] = ContentItem(type: .markdown(updatedText), timestamp: Date())
+                        
+                        // 只发送增量的文本给UI更新
+                        let incrementalItem = ContentItem(type: .markdown(text), timestamp: Date(), isIncremental: true)
+                        await MainActor.run {
+                            self.currentUpdateHandler?(incrementalItem)
+                        }
+                    } else {
+                        // 创建新的完整markdown内容项
+                        let contentItem = ContentItem(type: .markdown(text), timestamp: Date())
+                        currentContentItems.append(contentItem)
+                        await MainActor.run {
+                            self.currentUpdateHandler?(contentItem)
+                        }
                     }
                 } else {
-                    // 创建新的完整内容项
-                    let contentItem = ContentItem(type: .text(text), timestamp: Date())
-                    currentContentItems.append(contentItem)
-                    await MainActor.run {
-                        self.currentUpdateHandler?(contentItem)
+                    // 普通文本处理，保持原来的逻辑
+                    if let lastIndex = currentContentItems.indices.last,
+                       case .text(let lastText) = currentContentItems[lastIndex].type,
+                       !text.hasPrefix("\n") && lastText.count > 0 {
+                        // 将新文本追加到最后一个文本内容项的记录中
+                        let updatedText = lastText + text
+                        currentContentItems[lastIndex] = ContentItem(type: .text(updatedText), timestamp: Date())
+                        
+                        // 只发送增量的文本给UI更新
+                        let incrementalItem = ContentItem(type: .text(text), timestamp: Date(), isIncremental: true)
+                        await MainActor.run {
+                            self.currentUpdateHandler?(incrementalItem)
+                        }
+                    } else {
+                        // 创建新的完整内容项
+                        let contentItem = ContentItem(type: .text(text), timestamp: Date())
+                        currentContentItems.append(contentItem)
+                        await MainActor.run {
+                            self.currentUpdateHandler?(contentItem)
+                        }
                     }
                 }
             }
@@ -194,7 +248,7 @@ class GeminiService {
         let requestBody: [String: Any] = [
             "contents": contents,
             "generationConfig": [
-                "temperature": 1.0,
+                "temperature": 0.7,
                 "topK": 40,
                 "topP": 0.95,
                 "maxOutputTokens": 8192,
@@ -234,6 +288,7 @@ class GeminiService {
         }
         
         print("发起API请求: \(url.absoluteString)")
+        print("使用模型: \(modelName)")
         
         do {
             let (bytes, response) = try await URLSession.shared.bytes(for: request)
@@ -244,6 +299,7 @@ class GeminiService {
             }
             
             print("HTTP响应状态: \(httpResponse.statusCode)")
+            print("HTTP响应头: \(httpResponse.allHeaderFields)")
             
             // 检查非200状态码
             if httpResponse.statusCode != 200 {
@@ -389,7 +445,7 @@ class GeminiService {
         let requestBody: [String: Any] = [
             "contents": contents,
             "generationConfig": [
-                "temperature": 1.0,
+                "temperature": 0.7,
                 "topK": 40,
                 "topP": 0.95,
                 "maxOutputTokens": 8192,
@@ -429,6 +485,8 @@ class GeminiService {
         }
         
         print("发起带图片的API请求: \(url.absoluteString)")
+        print("使用模型: \(modelName)")
+        print("图片大小: \(image.size.width) x \(image.size.height), 数据大小: \(imageData.count)")
         
         do {
             let (bytes, response) = try await URLSession.shared.bytes(for: request)
@@ -439,6 +497,7 @@ class GeminiService {
             }
             
             print("HTTP响应状态: \(httpResponse.statusCode)")
+            print("HTTP响应头: \(httpResponse.allHeaderFields)")
             
             // 检查非200状态码
             if httpResponse.statusCode != 200 {

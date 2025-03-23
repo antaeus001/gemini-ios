@@ -24,6 +24,7 @@ class ChatViewModel: ObservableObject {
         
         let assistantMessage = ChatMessage(role: .assistant, content: .text(welcomePrompt))
         messages.append(assistantMessage)
+        objectWillChange.send()  // 确保UI更新
     }
     
     // 启动图像编辑聊天
@@ -54,7 +55,7 @@ class ChatViewModel: ObservableObject {
         // 添加图片到聊天界面
         let userMessage = ChatMessage(role: .user, content: .image(image))
         messages.append(userMessage)
-        objectWillChange.send()
+        objectWillChange.send()  // 确保触发UI更新
     }
     
     // 发送带图片的消息
@@ -65,6 +66,7 @@ class ChatViewModel: ObservableObject {
         if !prompt.isEmpty {
             let userTextMessage = ChatMessage(role: .user, content: .text(prompt))
             messages.append(userTextMessage)
+            objectWillChange.send()  // 确保UI更新
         }
         
         // 创建一个初始的助手消息，使用空的混合内容数组
@@ -81,36 +83,16 @@ class ChatViewModel: ObservableObject {
             // 重置GeminiService的对话历史
             geminiService.clearChatHistory()
             
-            // 保存接收到的内容项
-            var mixedItems: [MixedContentItem] = []
-            
             // 使用流式API发送带图片的消息
             try await geminiService.generateContentWithImage(prompt: prompt, image: image) { [weak self] contentItem in
                 guard let self = self else { return }
                 
-                if case .text(let newText) = contentItem.type {
-                    print("接收到文本: \(newText)")
-                    
-                    // 添加文本内容项
-                    mixedItems.append(.text(newText))
-                    
-                    // 更新消息
-                    self.updateGeneratingMessageWithItems(mixedItems)
-                }
-                
-                if case .image(let imageData) = contentItem.type, let image = UIImage(data: imageData) {
-                    // 检查图像是否有效
-                    if image.size.width > 10 && image.size.height > 10 {
-                        print("接收到有效图像: \(image.size.width) x \(image.size.height)")
-                        
-                        // 添加图像内容项
-                        mixedItems.append(.image(image))
-                        
-                        // 更新消息
-                        self.updateGeneratingMessageWithItems(mixedItems)
-                    } else {
-                        print("接收到的图像尺寸太小: \(image.size.width) x \(image.size.height)")
-                    }
+                // 捕获任何处理过程中的错误
+                do {
+                    // 使用handleContentUpdate处理内容项
+                    self.handleContentUpdate(contentItem)
+                } catch {
+                    print("处理内容更新时出错: \(error.localizedDescription)")
                 }
             }
             
@@ -123,6 +105,7 @@ class ChatViewModel: ObservableObject {
             
             // 清除用户图片
             userImage = nil
+            objectWillChange.send()  // 确保UI更新
             
         } catch {
             self.error = error.localizedDescription
@@ -143,6 +126,7 @@ class ChatViewModel: ObservableObject {
         }
         
         isLoading = false
+        objectWillChange.send()  // 确保UI更新加载状态
     }
     
     // 通用的生成内容聊天方法
@@ -155,6 +139,7 @@ class ChatViewModel: ObservableObject {
         
         // 清除现有消息
         messages.removeAll()
+        objectWillChange.send()  // 确保UI更新
         
         // 添加用户消息到UI
         let userMessage = ChatMessage(role: .user, content: .text(prompt))
@@ -165,7 +150,7 @@ class ChatViewModel: ObservableObject {
         initialAssistantMessage.isGenerating = true
         currentlyGeneratingMessage = initialAssistantMessage
         messages.append(initialAssistantMessage)
-        objectWillChange.send() // 显式触发UI更新
+        objectWillChange.send()  // 显式触发UI更新
         
         isLoading = true
         error = nil
@@ -174,43 +159,20 @@ class ChatViewModel: ObservableObject {
             // 重置GeminiService的对话历史
             geminiService.clearChatHistory()
             
-            // 保存接收到的内容项
-            var mixedItems: [MixedContentItem] = []
-            
             // 使用流式API
             try await geminiService.generateContent(prompt: prompt) { [weak self] contentItem in
                 guard let self = self else { return }
                 
-                if case .text(let newText) = contentItem.type {
-                    print("接收到文本: \(newText)")
-                    
-                    // 添加文本内容项
-                    mixedItems.append(.text(newText))
-                    
-                    // 更新消息
-                    self.updateGeneratingMessageWithItems(mixedItems)
-                }
-                
-                if case .image(let imageData) = contentItem.type, let image = UIImage(data: imageData) {
-                    // 检查图像是否有效
-                    if image.size.width > 10 && image.size.height > 10 {
-                        print("接收到有效图像: \(image.size.width) x \(image.size.height)")
-                        
-                        // 添加图像内容项
-                        mixedItems.append(.image(image))
-                        
-                        // 更新消息
-                        self.updateGeneratingMessageWithItems(mixedItems)
-                    } else {
-                        print("接收到的图像尺寸太小: \(image.size.width) x \(image.size.height)")
-                    }
+                Task { @MainActor in  // 确保在主线程上处理UI更新
+                    // 使用handleContentUpdate处理内容项
+                    self.handleContentUpdate(contentItem)
                 }
             }
             
             // 完成生成后，设置为非生成状态
             if let index = messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id }) {
                 messages[index].isGenerating = false
-                objectWillChange.send() // 显式触发UI更新
+                objectWillChange.send()  // 显式触发UI更新
             }
             currentlyGeneratingMessage = nil
             
@@ -229,10 +191,11 @@ class ChatViewModel: ObservableObject {
             let assistantMessage = ChatMessage(role: .assistant, content: .text("很抱歉，处理您的请求时遇到问题。错误信息：\(error.localizedDescription)"))
             messages.append(assistantMessage)
             currentlyGeneratingMessage = nil
-            objectWillChange.send() // 显式触发UI更新
+            objectWillChange.send()  // 显式触发UI更新
         }
         
         isLoading = false
+        objectWillChange.send()  // 确保UI更新加载状态
     }
     
     // 更新当前生成的消息
@@ -248,12 +211,20 @@ class ChatViewModel: ObservableObject {
         // 优化多个连续文本项
         var i = 0
         while i < optimizedItems.count - 1 {
-            if case .text(let text1) = optimizedItems[i], case .text(let text2) = optimizedItems[i+1] {
+            if case .text(let text1, let id1) = optimizedItems[i], case .text(let text2, _) = optimizedItems[i+1] {
                 // 如果后一个文本不以换行符开头，合并两个文本项
                 if !text2.hasPrefix("\n") {
-                    optimizedItems[i] = .text(text1 + text2)
+                    optimizedItems[i] = .text(text1 + text2, id1)
                     optimizedItems.remove(at: i+1)
                     // 不递增i，因为我们需要检查合并后的项和下一项
+                } else {
+                    i += 1
+                }
+            } else if case .markdown(let md1, let id1) = optimizedItems[i], case .markdown(let md2, _) = optimizedItems[i+1] {
+                // 同样合并连续的markdown项
+                if !md2.hasPrefix("\n") {
+                    optimizedItems[i] = .markdown(md1 + md2, id1)
+                    optimizedItems.remove(at: i+1)
                 } else {
                     i += 1
                 }
@@ -282,11 +253,13 @@ class ChatViewModel: ObservableObject {
         if userImage != nil {
             await sendMessageWithImage(prompt: inputMessage)
             inputMessage = ""
+            objectWillChange.send()  // 确保UI更新
             return
         }
         
         let messageToSend = inputMessage
         inputMessage = ""
+        objectWillChange.send()  // 确保UI更新输入框
         
         // 添加用户消息
         let userMessage = ChatMessage(role: .user, content: .text(messageToSend))
@@ -297,43 +270,26 @@ class ChatViewModel: ObservableObject {
         initialAssistantMessage.isGenerating = true
         currentlyGeneratingMessage = initialAssistantMessage
         messages.append(initialAssistantMessage)
-        objectWillChange.send() // 显式触发UI更新
+        objectWillChange.send()  // 显式触发UI更新
         
         isLoading = true
         error = nil
         
         do {
-            // 保存接收到的内容项
-            var mixedItems: [MixedContentItem] = []
-            
             // 使用流式API
             try await geminiService.generateContent(prompt: messageToSend) { [weak self] contentItem in
                 guard let self = self else { return }
                 
-                if case .text(let newText) = contentItem.type {
-                    // 添加文本内容项
-                    mixedItems.append(.text(newText))
-                    
-                    // 更新消息
-                    self.updateGeneratingMessageWithItems(mixedItems)
-                }
-                
-                if case .image(let imageData) = contentItem.type, let image = UIImage(data: imageData) {
-                    // 检查图像是否有效
-                    if image.size.width > 10 && image.size.height > 10 {
-                        // 添加图像内容项
-                        mixedItems.append(.image(image))
-                        
-                        // 更新消息
-                        self.updateGeneratingMessageWithItems(mixedItems)
-                    }
+                Task { @MainActor in  // 确保在主线程上处理UI更新
+                    // 使用handleContentUpdate处理内容项
+                    self.handleContentUpdate(contentItem)
                 }
             }
             
             // 完成生成后，设置为非生成状态
             if let index = messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id }) {
                 messages[index].isGenerating = false
-                objectWillChange.send() // 显式触发UI更新
+                objectWillChange.send()  // 显式触发UI更新
             }
             currentlyGeneratingMessage = nil
             
@@ -345,6 +301,7 @@ class ChatViewModel: ObservableObject {
             if let lastMessage = messages.last, lastMessage.id == currentlyGeneratingMessage?.id {
                 if case .mixedContent(let items) = lastMessage.content, items.isEmpty {
                     messages.removeLast()
+                    objectWillChange.send()  // 确保UI更新
                 }
             }
             
@@ -352,10 +309,11 @@ class ChatViewModel: ObservableObject {
             let assistantMessage = ChatMessage(role: .assistant, content: .text("很抱歉，处理您的请求时遇到问题。错误信息：\(error.localizedDescription)"))
             messages.append(assistantMessage)
             currentlyGeneratingMessage = nil
-            objectWillChange.send() // 显式触发UI更新
+            objectWillChange.send()  // 显式触发UI更新
         }
         
         isLoading = false
+        objectWillChange.send()  // 确保UI更新加载状态
     }
     
     // 使用预设的示例提示
@@ -381,104 +339,68 @@ class ChatViewModel: ObservableObject {
         }
     }
     
-    // 处理GeminiService回调的内容更新
-    private func handleContentUpdate(contentItem: ContentItem) {
-        // 生成新的或更新现有的消息
-        guard let lastMessage = messages.last,
-              lastMessage.role == .assistant else {
-            
-            // 创建新的模型消息
-            let newMessage: ChatMessage
-            
-            switch contentItem.type {
-            case .text(let text):
-                newMessage = ChatMessage(role: .assistant, content: .text(text))
-            case .image(let imageData):
-                if let image = UIImage(data: imageData) {
-                    newMessage = ChatMessage(role: .assistant, content: .image(image))
-                } else {
-                    print("无法从数据创建UIImage，跳过此内容项")
-                    return
-                }
-            }
-            
-            messages.append(newMessage)
+    // 处理内容更新
+    func handleContentUpdate(_ contentItem: ContentItem) {
+        // 确保当前生成消息存在
+        guard let currentMessage = currentlyGeneratingMessage else {
+            print("没有当前生成的消息，无法处理内容更新")
             return
         }
         
-        // 更新现有的助手消息
-        switch (lastMessage.content, contentItem.type) {
-        case (.text(let existingText), .text(let newText)):
-            // 检查是否是增量更新
-            if contentItem.isIncremental {
-                // 只追加新的文本，不替换整个消息
-                lastMessage.content = .text(existingText + newText)
-            } else {
-                // 完全替换内容
-                lastMessage.content = .text(newText)
-            }
+        // 创建混合内容项目数组
+        var mixedItems: [MixedContentItem] = []
+        
+        // 如果消息已有内容，获取现有混合内容
+        if case .mixedContent(let existingItems) = currentMessage.content {
+            mixedItems = existingItems
+        }
+        
+        // 处理不同类型的内容项
+        switch contentItem.type {
+        case .text(let text):
+            // 跳过空文本
+            guard !text.isEmpty else { return }
             
-        case (.image, .text(let text)):
-            // 从图像转换为文本 - 应该很少发生
-            lastMessage.content = .text(text)
-        
-        case (.text, .image(let imageData)):
-            // 从文本转换为图像 - 应该很少发生
-            if let image = UIImage(data: imageData) {
-                lastMessage.content = .image(image)
-            }
-        
-        case (.image, .image(let imageData)):
-            // 更新图像
-            if let image = UIImage(data: imageData) {
-                lastMessage.content = .image(image)
-            }
-        
-        case (.mixedContent(var items), .text(let newText)):
-            // 更新混合内容的最后一个文本项或添加新的文本项
-            if let lastIndex = items.indices.last,
-               case .text(let existingText) = items[lastIndex], 
-               contentItem.isIncremental {
-                // 如果是增量更新并且最后一项是文本，则追加
-                items[lastIndex] = .text(existingText + newText)
+            // 如果是增量文本且已有文本内容，合并到最后一个文本项
+            if contentItem.isIncremental, 
+               let lastIndex = mixedItems.indices.last,
+               case .text(let existingText, let id) = mixedItems[lastIndex] {
+                // 合并文本，保留原ID
+                mixedItems[lastIndex] = .text(existingText + text, id)
             } else {
-                // 否则添加新的文本项
-                items.append(.text(newText))
-            }
-            lastMessage.content = .mixedContent(items)
-        
-        case (.mixedContent(var items), .image(let imageData)):
-            // 添加新的图像项
-            if let image = UIImage(data: imageData) {
-                items.append(.image(image))
-                lastMessage.content = .mixedContent(items)
-            }
-        
-        default:
-            // 将现有内容转换为混合内容
-            var mixedItems: [MixedContentItem] = []
-            
-            // 首先添加现有内容
-            switch lastMessage.content {
-            case .text(let text):
+                // 添加新的文本项，自动生成新ID
                 mixedItems.append(.text(text))
-            case .image(let image):
+            }
+            
+        case .markdown(let markdownText):
+            // 跳过空markdown
+            guard !markdownText.isEmpty else { return }
+            
+            // 如果是增量markdown且已有markdown内容，合并到最后一个markdown项
+            if contentItem.isIncremental, 
+               let lastIndex = mixedItems.indices.last,
+               case .markdown(let existingText, let id) = mixedItems[lastIndex] {
+                // 合并markdown文本，保留原ID
+                mixedItems[lastIndex] = .markdown(existingText + markdownText, id)
+            } else {
+                // 添加新的markdown项，自动生成新ID
+                mixedItems.append(.markdown(markdownText))
+            }
+            
+        case .image(let imageData):
+            if let image = UIImage(data: imageData) {
+                // 添加图像项，自动生成新ID
                 mixedItems.append(.image(image))
-            case .mixedContent(let items):
-                mixedItems.append(contentsOf: items)
+                print("添加图像内容项，大小: \(imageData.count) 字节")
+            } else {
+                print("警告: 无法从数据创建图像，大小: \(imageData.count) 字节")
             }
-            
-            // 然后添加新内容
-            switch contentItem.type {
-            case .text(let text):
-                mixedItems.append(.text(text))
-            case .image(let imageData):
-                if let image = UIImage(data: imageData) {
-                    mixedItems.append(.image(image))
-                }
-            }
-            
-            lastMessage.content = .mixedContent(mixedItems)
+        }
+        
+        // 仅当有内容变化时才更新
+        if !mixedItems.isEmpty {
+            // 更新消息内容
+            updateGeneratingMessageWithItems(mixedItems)
         }
     }
 }

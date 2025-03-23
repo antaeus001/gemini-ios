@@ -7,6 +7,7 @@ enum ChatContentType: Equatable {
     case text(String)
     case image(UIImage)
     case mixedContent([MixedContentItem])
+    case markdown(String)
     
     static func == (lhs: ChatContentType, rhs: ChatContentType) -> Bool {
         switch (lhs, rhs) {
@@ -27,6 +28,8 @@ enum ChatContentType: Equatable {
                 }
             }
             return true
+        case (.markdown(let lhsText), .markdown(let rhsText)):
+            return lhsText == rhsText
         default:
             // 不同类型的内容不相等
             return false
@@ -40,8 +43,20 @@ class ChatMessage: Identifiable, ObservableObject, Equatable {
     let role: ChatRole
     let timestamp = Date()
     
-    @Published var content: ChatContentType
-    var isGenerating: Bool = false
+    // 监听内容变化，并触发objectWillChange
+    @Published var content: ChatContentType {
+        willSet {
+            // 确保在修改之前触发UI更新
+            objectWillChange.send()
+        }
+    }
+    
+    @Published var isGenerating: Bool = false {
+        willSet {
+            // 确保在修改之前触发UI更新
+            objectWillChange.send()
+        }
+    }
     
     init(role: ChatRole, content: ChatContentType) {
         self.role = role
