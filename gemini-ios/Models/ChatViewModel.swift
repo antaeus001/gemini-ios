@@ -20,9 +20,18 @@ class ChatViewModel: ObservableObject {
     
     // 启动欢迎对话
     func startWelcomeChat() {
-        let welcomePrompt = "你好，我是基于Gemini 2.0 Flash的AI助手。我可以帮你生成文本和图像。请告诉我你想创建什么？"
+        let welcomePrompt = """
+        好的，请您上传您想要调整的图片。
+
+        **一旦您上传图片，我会尝试进行以下调整：**
+
+        • 提高亮度：使图像整体看起来更明亮
+        • 增加对比度：拉大图像中亮部和暗部的差异，增强层次感和立体感。
+
+        请您耐心等待我处理完成后的效果。
+        """
         
-        let assistantMessage = ChatMessage(role: .assistant, content: .text(welcomePrompt))
+        let assistantMessage = ChatMessage(role: .assistant, content: .markdown(welcomePrompt))
         messages.append(assistantMessage)
         objectWillChange.send()  // 确保UI更新
     }
@@ -211,20 +220,74 @@ class ChatViewModel: ObservableObject {
         // 优化多个连续文本项
         var i = 0
         while i < optimizedItems.count - 1 {
+            // 合并连续的文本项
             if case .text(let text1, let id1) = optimizedItems[i], case .text(let text2, _) = optimizedItems[i+1] {
-                // 如果后一个文本不以换行符开头，合并两个文本项
-                if !text2.hasPrefix("\n") {
-                    optimizedItems[i] = .text(text1 + text2, id1)
+                // 检查是否应该合并这两个文本项
+                var shouldMerge = true
+                
+                // 如果后一个文本以换行符开头，需要特殊处理
+                // 在列表和段落之间，我们希望保留换行
+                // 但在同一个句子被错误分割的情况下，应该合并
+                if text2.hasPrefix("\n") {
+                    // 检查是否为段落分隔（例如两个空行）或列表项
+                    // 在这些情况下，不合并
+                    if text2.hasPrefix("\n\n") || text2.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("•") {
+                        shouldMerge = false
+                    }
+                }
+                
+                if shouldMerge {
+                    // 处理空格问题
+                    // 如果text1不以空格结尾且text2不以空格开头，添加一个空格
+                    var combinedText = text1
+                    let needsSpace = !combinedText.hasSuffix(" ") && 
+                                    !text2.hasPrefix(" ") && 
+                                    !combinedText.isEmpty &&
+                                    !combinedText.hasSuffix("\n") &&
+                                    !".,:;?!".contains(combinedText.last!)
+                    
+                    if needsSpace {
+                        combinedText += " "
+                    }
+                    
+                    optimizedItems[i] = .text(combinedText + text2, id1)
                     optimizedItems.remove(at: i+1)
                     // 不递增i，因为我们需要检查合并后的项和下一项
                 } else {
                     i += 1
                 }
-            } else if case .markdown(let md1, let id1) = optimizedItems[i], case .markdown(let md2, _) = optimizedItems[i+1] {
-                // 同样合并连续的markdown项
-                if !md2.hasPrefix("\n") {
-                    optimizedItems[i] = .markdown(md1 + md2, id1)
+            } 
+            // 合并连续的markdown项
+            else if case .markdown(let md1, let id1) = optimizedItems[i], case .markdown(let md2, _) = optimizedItems[i+1] {
+                // 检查是否应该合并这两个markdown项
+                var shouldMerge = true
+                
+                // 如果后一个markdown以换行符开头，需要特殊处理
+                if md2.hasPrefix("\n") {
+                    // 检查是否为段落分隔（例如两个空行）或列表项
+                    // 在这些情况下，不合并
+                    if md2.hasPrefix("\n\n") || md2.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("•") {
+                        shouldMerge = false
+                    }
+                }
+                
+                if shouldMerge {
+                    // 处理空格问题
+                    // 如果md1不以空格结尾且md2不以空格开头，添加一个空格
+                    var combinedMd = md1
+                    let needsSpace = !combinedMd.hasSuffix(" ") && 
+                                    !md2.hasPrefix(" ") && 
+                                    !combinedMd.isEmpty &&
+                                    !combinedMd.hasSuffix("\n") &&
+                                    !".,:;?!".contains(combinedMd.last!)
+                    
+                    if needsSpace {
+                        combinedMd += " "
+                    }
+                    
+                    optimizedItems[i] = .markdown(combinedMd + md2, id1)
                     optimizedItems.remove(at: i+1)
+                    // 不递增i，因为我们需要检查合并后的项和下一项
                 } else {
                     i += 1
                 }
@@ -316,27 +379,59 @@ class ChatViewModel: ObservableObject {
         objectWillChange.send()  // 确保UI更新加载状态
     }
     
-    // 使用预设的示例提示
+    // 使用示例提示
     func useExamplePrompt(type: ExamplePromptType) {
+        // 根据类型选择不同的示例提示
+        var prompt = ""
+        
         switch type {
         case .imageEdit:
-            let prompt = "为羊角面包添加一些巧克力涂层。"
-            startImageEditChat(prompt: prompt)
+            prompt = """
+            **图像编辑助手**
+            
+            上传一张照片，我可以帮你:
+            • 调整亮度和对比度
+            • 增强细节和锐度
+            • 应用艺术滤镜效果
+            • 移除不需要的元素
+            
+            请上传你想编辑的图片，并告诉我你想要的效果。
+            """
             
         case .storyGeneration:
-            let prompt = "生成一个关于白色小山羊在农场冒险的故事，采用3D卡通动画风格。为每个场景生成一张图片。"
-            startStoryGenerationChat(prompt: prompt)
+            prompt = """
+            **创意故事生成器**
+            
+            我可以根据你的想法创作引人入胜的故事。
+            
+            提供以下要素，我将为你创作一个完整的故事:
+            • 主角特点（年龄、性格等）
+            • 故事发生的背景/时代
+            • 核心冲突或挑战
+            • 故事主题或你希望传达的信息
+            
+            请分享你的创意元素！
+            """
             
         case .designGeneration:
-            let prompt = """
-            生成一个生日贺卡设计，带有美丽的花卉装饰。文字应该很大，内容为：
-            "生日快乐！
-            祝你的一天充满欢乐、笑声和你最喜欢的一切。
-            愿来年成为你最美好的一年，带给你激动人心的冒险和美妙的回忆。
-            为你干杯！"
+            prompt = """
+            **UI/UX设计助手**
+            
+            我可以帮你:
+            • 生成设计理念和灵感
+            • 分析设计趋势和最佳实践
+            • 提供色彩搭配建议
+            • 评估界面布局和用户体验
+            
+            请描述你的设计项目和需求，我会提供专业建议。
             """
-            startDesignGenerationChat(prompt: prompt)
         }
+        
+        // 添加AI助手消息
+        let assistantMessage = ChatMessage(role: .assistant, content: .markdown(prompt))
+        messages.removeAll() // 清除现有消息
+        messages.append(assistantMessage)
+        objectWillChange.send()
     }
     
     // 处理内容更新
@@ -361,30 +456,104 @@ class ChatViewModel: ObservableObject {
             // 跳过空文本
             guard !text.isEmpty else { return }
             
-            // 如果是增量文本且已有文本内容，合并到最后一个文本项
-            if contentItem.isIncremental, 
-               let lastIndex = mixedItems.indices.last,
-               case .text(let existingText, let id) = mixedItems[lastIndex] {
-                // 合并文本，保留原ID
-                mixedItems[lastIndex] = .text(existingText + text, id)
+            // 修剪文本开头和结尾的空白字符，但保留内部格式
+            let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedText.isEmpty else { return }
+            
+            // 检查文本是否包含Markdown标记
+            let containsMarkdown = trimmedText.contains("**") || 
+                                   trimmedText.contains("*") || 
+                                   trimmedText.contains("##") || 
+                                   trimmedText.contains("#") || 
+                                   trimmedText.contains("```") || 
+                                   trimmedText.contains("`") || 
+                                   (trimmedText.contains("[") && trimmedText.contains("]("))
+            
+            // 如果包含Markdown，则作为markdown类型处理
+            if containsMarkdown {
+                // 如果是增量文本且已有markdown内容，合并到最后一个markdown项
+                if contentItem.isIncremental, 
+                   let lastIndex = mixedItems.indices.last,
+                   case .markdown(let existingText, let id) = mixedItems[lastIndex] {
+                    // 处理合并时的空白字符
+                    var combinedText = existingText
+                    
+                    // 如果现有文本不以空格结尾且新文本不以空格开头，且现有文本不以标点符号结尾，添加一个空格
+                    let needsSpace = !combinedText.hasSuffix(" ") && 
+                                    !trimmedText.hasPrefix(" ") && 
+                                    !combinedText.isEmpty &&
+                                    !combinedText.hasSuffix("\n") &&
+                                    !".,:;?!".contains(combinedText.last!)
+                    
+                    if needsSpace {
+                        combinedText += " "
+                    }
+                    
+                    // 合并markdown文本，保留原ID
+                    mixedItems[lastIndex] = .markdown(combinedText + trimmedText, id)
+                } else {
+                    // 添加新的markdown项，自动生成新ID
+                    mixedItems.append(.markdown(trimmedText))
+                }
             } else {
-                // 添加新的文本项，自动生成新ID
-                mixedItems.append(.text(text))
+                // 如果是普通文本，则作为text类型处理
+                // 如果是增量文本且已有文本内容，合并到最后一个文本项
+                if contentItem.isIncremental, 
+                   let lastIndex = mixedItems.indices.last,
+                   case .text(let existingText, let id) = mixedItems[lastIndex] {
+                    // 处理合并时的空白字符
+                    var combinedText = existingText
+                    
+                    // 如果现有文本不以空格结尾且新文本不以空格开头，且现有文本不以标点符号结尾，添加一个空格
+                    let needsSpace = !combinedText.hasSuffix(" ") && 
+                                    !trimmedText.hasPrefix(" ") && 
+                                    !combinedText.isEmpty &&
+                                    !combinedText.hasSuffix("\n") &&
+                                    !".,:;?!".contains(combinedText.last!)
+                    
+                    if needsSpace {
+                        combinedText += " "
+                    }
+                    
+                    // 合并文本，保留原ID
+                    mixedItems[lastIndex] = .text(combinedText + trimmedText, id)
+                } else {
+                    // 添加新的文本项，自动生成新ID
+                    mixedItems.append(.text(trimmedText))
+                }
             }
             
         case .markdown(let markdownText):
             // 跳过空markdown
             guard !markdownText.isEmpty else { return }
             
+            // 修剪markdown文本开头和结尾的空白字符，但保留内部格式
+            let trimmedMarkdown = markdownText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedMarkdown.isEmpty else { return }
+            
             // 如果是增量markdown且已有markdown内容，合并到最后一个markdown项
             if contentItem.isIncremental, 
                let lastIndex = mixedItems.indices.last,
                case .markdown(let existingText, let id) = mixedItems[lastIndex] {
+                // 处理合并时的空白字符
+                var combinedText = existingText
+                
+                // 如果现有文本不以空格结尾且新文本不以空格开头，且现有文本不以标点符号结尾，添加一个空格
+                let needsSpace = !combinedText.hasSuffix(" ") && 
+                                !trimmedMarkdown.hasPrefix(" ") && 
+                                !combinedText.isEmpty &&
+                                !combinedText.hasSuffix("\n") &&
+                                !".,:;?!".contains(combinedText.last!)
+                
+                if needsSpace {
+                    combinedText += " "
+                }
+                
                 // 合并markdown文本，保留原ID
-                mixedItems[lastIndex] = .markdown(existingText + markdownText, id)
+                mixedItems[lastIndex] = .markdown(combinedText + trimmedMarkdown, id)
             } else {
                 // 添加新的markdown项，自动生成新ID
-                mixedItems.append(.markdown(markdownText))
+                mixedItems.append(.markdown(trimmedMarkdown))
             }
             
         case .image(let imageData):
