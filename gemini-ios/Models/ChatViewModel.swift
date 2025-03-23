@@ -242,8 +242,28 @@ class ChatViewModel: ObservableObject {
             return
         }
         
+        // 检查是否有多个文本项，可以进行合并
+        var optimizedItems = items
+        
+        // 优化多个连续文本项
+        var i = 0
+        while i < optimizedItems.count - 1 {
+            if case .text(let text1) = optimizedItems[i], case .text(let text2) = optimizedItems[i+1] {
+                // 如果后一个文本不以换行符开头，合并两个文本项
+                if !text2.hasPrefix("\n") {
+                    optimizedItems[i] = .text(text1 + text2)
+                    optimizedItems.remove(at: i+1)
+                    // 不递增i，因为我们需要检查合并后的项和下一项
+                } else {
+                    i += 1
+                }
+            } else {
+                i += 1
+            }
+        }
+        
         // 直接用当前收集的所有项目更新消息
-        messages[index].content = .mixedContent(items)
+        messages[index].content = .mixedContent(optimizedItems)
         
         // 更新引用
         currentlyGeneratingMessage = messages[index]
@@ -251,7 +271,7 @@ class ChatViewModel: ObservableObject {
         // 触发UI更新
         objectWillChange.send()
         
-        print("更新消息[ID: \(currentlyGeneratingMessage?.id.uuidString ?? "nil")]，当前项数: \(items.count)")
+        print("更新消息[ID: \(currentlyGeneratingMessage?.id.uuidString ?? "nil")]，当前项数: \(optimizedItems.count)")
     }
     
     // 发送消息
@@ -358,6 +378,107 @@ class ChatViewModel: ObservableObject {
             为你干杯！"
             """
             startDesignGenerationChat(prompt: prompt)
+        }
+    }
+    
+    // 处理GeminiService回调的内容更新
+    private func handleContentUpdate(contentItem: ContentItem) {
+        // 生成新的或更新现有的消息
+        guard let lastMessage = messages.last,
+              lastMessage.role == .assistant else {
+            
+            // 创建新的模型消息
+            let newMessage: ChatMessage
+            
+            switch contentItem.type {
+            case .text(let text):
+                newMessage = ChatMessage(role: .assistant, content: .text(text))
+            case .image(let imageData):
+                if let image = UIImage(data: imageData) {
+                    newMessage = ChatMessage(role: .assistant, content: .image(image))
+                } else {
+                    print("无法从数据创建UIImage，跳过此内容项")
+                    return
+                }
+            }
+            
+            messages.append(newMessage)
+            return
+        }
+        
+        // 更新现有的助手消息
+        switch (lastMessage.content, contentItem.type) {
+        case (.text(let existingText), .text(let newText)):
+            // 检查是否是增量更新
+            if contentItem.isIncremental {
+                // 只追加新的文本，不替换整个消息
+                lastMessage.content = .text(existingText + newText)
+            } else {
+                // 完全替换内容
+                lastMessage.content = .text(newText)
+            }
+            
+        case (.image, .text(let text)):
+            // 从图像转换为文本 - 应该很少发生
+            lastMessage.content = .text(text)
+        
+        case (.text, .image(let imageData)):
+            // 从文本转换为图像 - 应该很少发生
+            if let image = UIImage(data: imageData) {
+                lastMessage.content = .image(image)
+            }
+        
+        case (.image, .image(let imageData)):
+            // 更新图像
+            if let image = UIImage(data: imageData) {
+                lastMessage.content = .image(image)
+            }
+        
+        case (.mixedContent(var items), .text(let newText)):
+            // 更新混合内容的最后一个文本项或添加新的文本项
+            if let lastIndex = items.indices.last,
+               case .text(let existingText) = items[lastIndex], 
+               contentItem.isIncremental {
+                // 如果是增量更新并且最后一项是文本，则追加
+                items[lastIndex] = .text(existingText + newText)
+            } else {
+                // 否则添加新的文本项
+                items.append(.text(newText))
+            }
+            lastMessage.content = .mixedContent(items)
+        
+        case (.mixedContent(var items), .image(let imageData)):
+            // 添加新的图像项
+            if let image = UIImage(data: imageData) {
+                items.append(.image(image))
+                lastMessage.content = .mixedContent(items)
+            }
+        
+        default:
+            // 将现有内容转换为混合内容
+            var mixedItems: [MixedContentItem] = []
+            
+            // 首先添加现有内容
+            switch lastMessage.content {
+            case .text(let text):
+                mixedItems.append(.text(text))
+            case .image(let image):
+                mixedItems.append(.image(image))
+            case .mixedContent(let items):
+                mixedItems.append(contentsOf: items)
+            }
+            
+            // 然后添加新内容
+            switch contentItem.type {
+            case .text(let text):
+                mixedItems.append(.text(text))
+            case .image(let imageData):
+                if let image = UIImage(data: imageData) {
+                    mixedItems.append(.image(image))
+                }
+            }
+            
+            lastMessage.content = .mixedContent(mixedItems)
         }
     }
 }

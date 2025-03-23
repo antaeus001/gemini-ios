@@ -9,9 +9,16 @@ enum ContentItemType {
 
 // 内容项结构
 struct ContentItem: Identifiable {
-    let id = UUID()
+    var id = UUID()
     let type: ContentItemType
     let timestamp: Date
+    let isIncremental: Bool
+    
+    init(type: ContentItemType, timestamp: Date = Date(), isIncremental: Bool = false) {
+        self.type = type
+        self.timestamp = timestamp
+        self.isIncremental = isIncremental
+    }
 }
 
 // 内容项更新处理器类型
@@ -102,10 +109,26 @@ class GeminiService {
             
             // 处理文本内容
             if let text = part["text"] as? String, !text.isEmpty {
-                let contentItem = ContentItem(type: .text(text), timestamp: Date())
-                currentContentItems.append(contentItem)
-                await MainActor.run {
-                    self.currentUpdateHandler?(contentItem)
+                // 检查是否有当前内容项，并且最后一个是文本类型
+                if let lastIndex = currentContentItems.indices.last,
+                   case .text(let lastText) = currentContentItems[lastIndex].type,
+                   !text.hasPrefix("\n") && lastText.count > 0 {
+                    // 将新文本追加到最后一个文本内容项的记录中
+                    let updatedText = lastText + text
+                    currentContentItems[lastIndex] = ContentItem(type: .text(updatedText), timestamp: Date())
+                    
+                    // 只发送增量的文本给UI更新
+                    let incrementalItem = ContentItem(type: .text(text), timestamp: Date(), isIncremental: true)
+                    await MainActor.run {
+                        self.currentUpdateHandler?(incrementalItem)
+                    }
+                } else {
+                    // 创建新的完整内容项
+                    let contentItem = ContentItem(type: .text(text), timestamp: Date())
+                    currentContentItems.append(contentItem)
+                    await MainActor.run {
+                        self.currentUpdateHandler?(contentItem)
+                    }
                 }
             }
             

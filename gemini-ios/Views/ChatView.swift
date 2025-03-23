@@ -185,6 +185,7 @@ struct MessageView: View {
                         .foregroundColor(message.role == .user ? .white : .primary)
                         .cornerRadius(16)
                         .textSelection(.enabled)
+                        .id("text-\(message.id)-\(text.hashValue)") // 添加唯一ID以便内容更新时视图刷新
                         .onAppear {
                             print("显示文本消息: \(String(text.prefix(20)))...")
                         }
@@ -263,13 +264,12 @@ struct MessageView: View {
                     .cornerRadius(16)
                 }
             }
-            .padding(.horizontal, 4)
+            .frame(maxWidth: UIScreen.main.bounds.width * 0.85, alignment: message.role == .user ? .trailing : .leading)
             
             if message.role == .assistant {
                 Spacer()
             }
         }
-        .id(UUID()) // 强制每次刷新
     }
 }
 
