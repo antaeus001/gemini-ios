@@ -8,12 +8,14 @@ class ChatViewModel: ObservableObject {
     @Published var inputMessage: String = ""
     @Published var isLoading: Bool = false
     @Published var error: String? = nil
-    @Published var currentlyGeneratingMessage: ChatMessage? = nil
     @Published var userImage: UIImage? = nil
     
-    private let geminiService = GeminiService()
+    var currentlyGeneratingMessage: ChatMessage? = nil
+    private let geminiService = GeminiService.shared
     
+    // 初始化方法
     init() {
+        print("ChatViewModel初始化 - 使用简化的文本合并逻辑")
         // 在初始化时自动启动欢迎对话
         startWelcomeChat()
     }
@@ -207,107 +209,6 @@ class ChatViewModel: ObservableObject {
         objectWillChange.send()  // 确保UI更新加载状态
     }
     
-    // 更新当前生成的消息
-    private func updateGeneratingMessageWithItems(_ items: [MixedContentItem]) {
-        guard let index = messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id }) else {
-            print("未找到当前生成的消息，无法更新")
-            return
-        }
-        
-        // 检查是否有多个文本项，可以进行合并
-        var optimizedItems = items
-        
-        // 优化多个连续文本项
-        var i = 0
-        while i < optimizedItems.count - 1 {
-            // 合并连续的文本项
-            if case .text(let text1, let id1) = optimizedItems[i], case .text(let text2, _) = optimizedItems[i+1] {
-                // 检查是否应该合并这两个文本项
-                var shouldMerge = true
-                
-                // 如果后一个文本以换行符开头，需要特殊处理
-                // 在列表和段落之间，我们希望保留换行
-                // 但在同一个句子被错误分割的情况下，应该合并
-                if text2.hasPrefix("\n") {
-                    // 检查是否为段落分隔（例如两个空行）或列表项
-                    // 在这些情况下，不合并
-                    if text2.hasPrefix("\n\n") || text2.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("•") {
-                        shouldMerge = false
-                    }
-                }
-                
-                if shouldMerge {
-                    // 处理空格问题
-                    // 如果text1不以空格结尾且text2不以空格开头，添加一个空格
-                    var combinedText = text1
-                    let needsSpace = !combinedText.hasSuffix(" ") && 
-                                    !text2.hasPrefix(" ") && 
-                                    !combinedText.isEmpty &&
-                                    !combinedText.hasSuffix("\n") &&
-                                    !".,:;?!".contains(combinedText.last!)
-                    
-                    if needsSpace {
-                        combinedText += " "
-                    }
-                    
-                    optimizedItems[i] = .text(combinedText + text2, id1)
-                    optimizedItems.remove(at: i+1)
-                    // 不递增i，因为我们需要检查合并后的项和下一项
-                } else {
-                    i += 1
-                }
-            } 
-            // 合并连续的markdown项
-            else if case .markdown(let md1, let id1) = optimizedItems[i], case .markdown(let md2, _) = optimizedItems[i+1] {
-                // 检查是否应该合并这两个markdown项
-                var shouldMerge = true
-                
-                // 如果后一个markdown以换行符开头，需要特殊处理
-                if md2.hasPrefix("\n") {
-                    // 检查是否为段落分隔（例如两个空行）或列表项
-                    // 在这些情况下，不合并
-                    if md2.hasPrefix("\n\n") || md2.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("•") {
-                        shouldMerge = false
-                    }
-                }
-                
-                if shouldMerge {
-                    // 处理空格问题
-                    // 如果md1不以空格结尾且md2不以空格开头，添加一个空格
-                    var combinedMd = md1
-                    let needsSpace = !combinedMd.hasSuffix(" ") && 
-                                    !md2.hasPrefix(" ") && 
-                                    !combinedMd.isEmpty &&
-                                    !combinedMd.hasSuffix("\n") &&
-                                    !".,:;?!".contains(combinedMd.last!)
-                    
-                    if needsSpace {
-                        combinedMd += " "
-                    }
-                    
-                    optimizedItems[i] = .markdown(combinedMd + md2, id1)
-                    optimizedItems.remove(at: i+1)
-                    // 不递增i，因为我们需要检查合并后的项和下一项
-                } else {
-                    i += 1
-                }
-            } else {
-                i += 1
-            }
-        }
-        
-        // 直接用当前收集的所有项目更新消息
-        messages[index].content = .mixedContent(optimizedItems)
-        
-        // 更新引用
-        currentlyGeneratingMessage = messages[index]
-        
-        // 触发UI更新
-        objectWillChange.send()
-        
-        print("更新消息[ID: \(currentlyGeneratingMessage?.id.uuidString ?? "nil")]，当前项数: \(optimizedItems.count)")
-    }
-    
     // 发送消息
     func sendMessage() async {
         guard !inputMessage.isEmpty else { return }
@@ -379,6 +280,130 @@ class ChatViewModel: ObservableObject {
         objectWillChange.send()  // 确保UI更新加载状态
     }
     
+    // 处理内容更新
+    func handleContentUpdate(_ contentItem: ContentItem) {
+        // 确保当前生成消息存在
+        guard let currentMessage = currentlyGeneratingMessage else {
+            print("没有当前生成的消息，无法处理内容更新")
+            return
+        }
+        
+        // 创建混合内容项目数组
+        var mixedItems: [MixedContentItem] = []
+        
+        // 如果消息已有内容，获取现有混合内容
+        if case .mixedContent(let existingItems) = currentMessage.content {
+            mixedItems = existingItems
+        }
+        
+        // 处理不同类型的内容项
+        switch contentItem.type {
+        case .text(let text):
+            // 跳过空文本
+            guard !text.isEmpty else { return }
+            
+            // 修剪文本开头和结尾的空白字符，但保留内部格式
+            let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedText.isEmpty else { return }
+            
+            print("接收到文本: '\(trimmedText)'")
+            
+            // 极简处理：如果已有内容项，且最后一项是文本，直接合并
+            if contentItem.isIncremental, let lastIndex = mixedItems.indices.last {
+                if case .text(let existingText, let id) = mixedItems[lastIndex] {
+                    // 直接合并文本，不处理任何特殊情况
+                    mixedItems[lastIndex] = .text(existingText + trimmedText, id)
+                    print("已合并到现有文本")
+                } else if case .markdown(let existingText, let id) = mixedItems[lastIndex] {
+                    // 如果最后一项是markdown，也直接合并
+                    mixedItems[lastIndex] = .markdown(existingText + trimmedText, id)
+                    print("已合并到现有markdown")
+                } else {
+                    // 如果最后一项不是文本或markdown，添加新文本项
+                    mixedItems.append(.text(trimmedText))
+                    print("添加为新文本项")
+                }
+            } else {
+                // 第一个内容项或非增量内容
+                mixedItems.append(.text(trimmedText))
+                print("添加为新文本项")
+            }
+            
+        case .markdown(let markdownText):
+            // 跳过空markdown
+            guard !markdownText.isEmpty else { return }
+            
+            // 修剪markdown文本开头和结尾的空白字符，但保留内部格式
+            let trimmedMarkdown = markdownText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedMarkdown.isEmpty else { return }
+            
+            print("接收到markdown: '\(trimmedMarkdown)'")
+            
+            // 极简处理：如果已有内容项，且最后一项是markdown，直接合并
+            if contentItem.isIncremental, let lastIndex = mixedItems.indices.last {
+                if case .markdown(let existingText, let id) = mixedItems[lastIndex] {
+                    // 直接合并markdown，不处理任何特殊情况
+                    mixedItems[lastIndex] = .markdown(existingText + trimmedMarkdown, id)
+                    print("已合并到现有markdown")
+                } else if case .text(let existingText, let id) = mixedItems[lastIndex] {
+                    // 如果最后一项是文本，也直接合并
+                    mixedItems[lastIndex] = .text(existingText + trimmedMarkdown, id)
+                    print("已合并到现有文本")
+                } else {
+                    // 如果最后一项不是文本或markdown，添加新markdown项
+                    mixedItems.append(.markdown(trimmedMarkdown))
+                    print("添加为新markdown项")
+                }
+            } else {
+                // 第一个内容项或非增量内容
+                mixedItems.append(.markdown(trimmedMarkdown))
+                print("添加为新markdown项")
+            }
+            
+        case .image(let imageData):
+            if let image = UIImage(data: imageData) {
+                // 添加图像项，自动生成新ID
+                mixedItems.append(.image(image))
+                print("添加图像内容项，大小: \(imageData.count) 字节")
+            } else {
+                print("警告: 无法从数据创建图像，大小: \(imageData.count) 字节")
+            }
+        }
+        
+        // 仅当有内容变化时才更新
+        if !mixedItems.isEmpty {
+            // 简化处理：直接更新消息，不进行优化
+            messages[messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id })!].content = .mixedContent(mixedItems)
+            
+            // 更新引用
+            currentlyGeneratingMessage = messages[messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id })!]
+            
+            // 触发UI更新
+            objectWillChange.send()
+            
+            print("更新消息完成，当前项数: \(mixedItems.count)")
+        }
+    }
+    
+    // 更新当前生成的消息
+    private func updateGeneratingMessageWithItems(_ items: [MixedContentItem]) {
+        guard let index = messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id }) else {
+            print("未找到当前生成的消息，无法更新")
+            return
+        }
+        
+        // 直接用当前收集的所有项目更新消息
+        messages[index].content = .mixedContent(items)
+        
+        // 更新引用
+        currentlyGeneratingMessage = messages[index]
+        
+        // 触发UI更新
+        objectWillChange.send()
+        
+        print("更新消息[ID: \(currentlyGeneratingMessage?.id.uuidString ?? "nil")]，当前项数: \(items.count)")
+    }
+    
     // 使用示例提示
     func useExamplePrompt(type: ExamplePromptType) {
         // 根据类型选择不同的示例提示
@@ -432,145 +457,6 @@ class ChatViewModel: ObservableObject {
         messages.removeAll() // 清除现有消息
         messages.append(assistantMessage)
         objectWillChange.send()
-    }
-    
-    // 处理内容更新
-    func handleContentUpdate(_ contentItem: ContentItem) {
-        // 确保当前生成消息存在
-        guard let currentMessage = currentlyGeneratingMessage else {
-            print("没有当前生成的消息，无法处理内容更新")
-            return
-        }
-        
-        // 创建混合内容项目数组
-        var mixedItems: [MixedContentItem] = []
-        
-        // 如果消息已有内容，获取现有混合内容
-        if case .mixedContent(let existingItems) = currentMessage.content {
-            mixedItems = existingItems
-        }
-        
-        // 处理不同类型的内容项
-        switch contentItem.type {
-        case .text(let text):
-            // 跳过空文本
-            guard !text.isEmpty else { return }
-            
-            // 修剪文本开头和结尾的空白字符，但保留内部格式
-            let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedText.isEmpty else { return }
-            
-            // 检查文本是否包含Markdown标记
-            let containsMarkdown = trimmedText.contains("**") || 
-                                   trimmedText.contains("*") || 
-                                   trimmedText.contains("##") || 
-                                   trimmedText.contains("#") || 
-                                   trimmedText.contains("```") || 
-                                   trimmedText.contains("`") || 
-                                   (trimmedText.contains("[") && trimmedText.contains("]("))
-            
-            // 如果包含Markdown，则作为markdown类型处理
-            if containsMarkdown {
-                // 如果是增量文本且已有markdown内容，合并到最后一个markdown项
-                if contentItem.isIncremental, 
-                   let lastIndex = mixedItems.indices.last,
-                   case .markdown(let existingText, let id) = mixedItems[lastIndex] {
-                    // 处理合并时的空白字符
-                    var combinedText = existingText
-                    
-                    // 如果现有文本不以空格结尾且新文本不以空格开头，且现有文本不以标点符号结尾，添加一个空格
-                    let needsSpace = !combinedText.hasSuffix(" ") && 
-                                    !trimmedText.hasPrefix(" ") && 
-                                    !combinedText.isEmpty &&
-                                    !combinedText.hasSuffix("\n") &&
-                                    !".,:;?!".contains(combinedText.last!)
-                    
-                    if needsSpace {
-                        combinedText += " "
-                    }
-                    
-                    // 合并markdown文本，保留原ID
-                    mixedItems[lastIndex] = .markdown(combinedText + trimmedText, id)
-                } else {
-                    // 添加新的markdown项，自动生成新ID
-                    mixedItems.append(.markdown(trimmedText))
-                }
-            } else {
-                // 如果是普通文本，则作为text类型处理
-                // 如果是增量文本且已有文本内容，合并到最后一个文本项
-                if contentItem.isIncremental, 
-                   let lastIndex = mixedItems.indices.last,
-                   case .text(let existingText, let id) = mixedItems[lastIndex] {
-                    // 处理合并时的空白字符
-                    var combinedText = existingText
-                    
-                    // 如果现有文本不以空格结尾且新文本不以空格开头，且现有文本不以标点符号结尾，添加一个空格
-                    let needsSpace = !combinedText.hasSuffix(" ") && 
-                                    !trimmedText.hasPrefix(" ") && 
-                                    !combinedText.isEmpty &&
-                                    !combinedText.hasSuffix("\n") &&
-                                    !".,:;?!".contains(combinedText.last!)
-                    
-                    if needsSpace {
-                        combinedText += " "
-                    }
-                    
-                    // 合并文本，保留原ID
-                    mixedItems[lastIndex] = .text(combinedText + trimmedText, id)
-                } else {
-                    // 添加新的文本项，自动生成新ID
-                    mixedItems.append(.text(trimmedText))
-                }
-            }
-            
-        case .markdown(let markdownText):
-            // 跳过空markdown
-            guard !markdownText.isEmpty else { return }
-            
-            // 修剪markdown文本开头和结尾的空白字符，但保留内部格式
-            let trimmedMarkdown = markdownText.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedMarkdown.isEmpty else { return }
-            
-            // 如果是增量markdown且已有markdown内容，合并到最后一个markdown项
-            if contentItem.isIncremental, 
-               let lastIndex = mixedItems.indices.last,
-               case .markdown(let existingText, let id) = mixedItems[lastIndex] {
-                // 处理合并时的空白字符
-                var combinedText = existingText
-                
-                // 如果现有文本不以空格结尾且新文本不以空格开头，且现有文本不以标点符号结尾，添加一个空格
-                let needsSpace = !combinedText.hasSuffix(" ") && 
-                                !trimmedMarkdown.hasPrefix(" ") && 
-                                !combinedText.isEmpty &&
-                                !combinedText.hasSuffix("\n") &&
-                                !".,:;?!".contains(combinedText.last!)
-                
-                if needsSpace {
-                    combinedText += " "
-                }
-                
-                // 合并markdown文本，保留原ID
-                mixedItems[lastIndex] = .markdown(combinedText + trimmedMarkdown, id)
-            } else {
-                // 添加新的markdown项，自动生成新ID
-                mixedItems.append(.markdown(trimmedMarkdown))
-            }
-            
-        case .image(let imageData):
-            if let image = UIImage(data: imageData) {
-                // 添加图像项，自动生成新ID
-                mixedItems.append(.image(image))
-                print("添加图像内容项，大小: \(imageData.count) 字节")
-            } else {
-                print("警告: 无法从数据创建图像，大小: \(imageData.count) 字节")
-            }
-        }
-        
-        // 仅当有内容变化时才更新
-        if !mixedItems.isEmpty {
-            // 更新消息内容
-            updateGeneratingMessageWithItems(mixedItems)
-        }
     }
 }
 

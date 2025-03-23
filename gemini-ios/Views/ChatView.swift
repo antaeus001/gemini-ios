@@ -36,6 +36,11 @@ extension Theme {
             .link {
                 ForegroundColor(.blue)
             }
+            .listItem { configuration in
+                configuration.label
+                    .markdownMargin(top: .em(0.25), bottom: .em(0.25))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
     }
 }
 
@@ -246,31 +251,23 @@ struct MessageView: View {
                 
                 switch message.content {
                 case .text(let text):
-                    if text.contains("```") || text.contains("#") || text.contains("*") || text.contains("[") {
-                        // 富文本内容，使用Markdown渲染
-                        Markdown(text)
-                            .textSelection(.enabled)
-                            .markdownTheme(Theme.custom)
-                            .padding(10)
-                            .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
-                            .cornerRadius(10)
-                    } else {
-                        // 普通文本
-                        Text(text)
-                            .padding(10)
-                            .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
-                            .cornerRadius(10)
-                            .textSelection(.enabled)
-                    }
+                    // 移除换行相关的判断，直接统一使用Text渲染
+                    Text(text)
+                        .padding(10)
+                        .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
+                        .cornerRadius(10)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                     
                 case .markdown(let markdownText):
-                    // 直接使用Markdown组件渲染
+                    // 直接使用Markdown组件渲染，确保没有额外处理
                     Markdown(markdownText)
                         .textSelection(.enabled)
                         .markdownTheme(Theme.custom)
                         .padding(10)
                         .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
                         .cornerRadius(10)
+                        .fixedSize(horizontal: false, vertical: true)
                     
                 case .image(let image):
                     Image(uiImage: image)
@@ -289,30 +286,22 @@ struct MessageView: View {
                         )
                     
                 case .mixedContent(let items):
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 0) {
                         // 分别处理不同类型的内容项
                         ForEach(items) { item in
                             switch item {
                             case .text(let text, _):
-                                if text.contains("```") || text.contains("#") || text.contains("*") || text.contains("[") {
-                                    // 富文本内容，使用Markdown渲染
-                                    Markdown(text)
-                                        .textSelection(.enabled)
-                                        .markdownTheme(Theme.custom)
-                                        .padding(4)
-                                } else {
-                                    // 普通文本
-                                    Text(text)
-                                        .padding(4)
-                                        .textSelection(.enabled)
-                                }
+                                // 统一使用Text渲染，不进行条件判断
+                                Text(text)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 
                             case .markdown(let markdownText, _):
                                 // Markdown内容
                                 Markdown(markdownText)
                                     .textSelection(.enabled)
                                     .markdownTheme(Theme.custom)
-                                    .padding(4)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 
                             case .image(let image, _):
                                 Image(uiImage: image)

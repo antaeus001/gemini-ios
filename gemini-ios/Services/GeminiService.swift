@@ -40,6 +40,9 @@ struct GeminiChatMessage {
 }
 
 class GeminiService {
+    // 共享实例
+    static let shared = GeminiService()
+    
     // API配置
     private let baseUrlString = "https://generativelanguage.googleapis.com/v1beta/models"
     private let modelName = "gemini-2.0-flash-exp-image-generation"
@@ -50,6 +53,9 @@ class GeminiService {
     var currentContentItems: [ContentItem] = []
     var isStreamActive: Bool = false
     var currentUpdateHandler: ContentUpdateHandler? = nil
+    private var chunkCounter: Int = 0
+    private var completeStreamLog: String = ""
+    private var streamStartTime: Date = Date()
     
     // 清除聊天历史
     func clearChatHistory() {
@@ -60,6 +66,46 @@ class GeminiService {
     // 停止流式生成
     func stopStream() {
         isStreamActive = false
+    }
+    
+    // 保存流式响应日志到文件
+    private func saveStreamLogToFile() {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let dateString = formatter.string(from: streamStartTime)
+        let logFilePath = documentsPath.appendingPathComponent("gemini_stream_log_\(dateString).txt")
+        
+        do {
+            try completeStreamLog.write(to: logFilePath, atomically: true, encoding: .utf8)
+            print("完整流式响应日志已保存到: \(logFilePath.path)")
+        } catch {
+            print("保存流式响应日志失败: \(error.localizedDescription)")
+        }
+    }
+    
+    // 打印流式响应内容
+    private func printResponseContent(_ content: String, type: String) {
+        let border = String(repeating: "=", count: 60)
+        let formattedContent = """
+        \(border)
+        [流式响应块 #\(chunkCounter)] - 类型: \(type)
+        \(border)
+        \(content)
+        \(border)
+        
+        """
+        print(formattedContent)
+        
+        // 添加到完整日志
+        let logEntry = """
+        
+        --- 块 #\(chunkCounter) (\(type)) ---
+        \(content)
+        """
+        completeStreamLog += logEntry
+        
+        chunkCounter += 1
     }
     
     // 解析SERVER-SENT EVENT行
@@ -77,10 +123,14 @@ class GeminiService {
     
     // 处理SSE行
     private func handleSSELine(_ line: String, modelParts: inout [[String: Any]]) async {
+        // 打印原始SSE行
+        print("收到SSE行: \(line)")
+        
         if line.hasPrefix("data:") {
             let dataContent = line.dropFirst(5).trimmingCharacters(in: .whitespacesAndNewlines)
             
             if dataContent == "[DONE]" {
+                print("流式响应完成: [DONE]")
                 isStreamActive = false
                 return
             }
@@ -88,7 +138,10 @@ class GeminiService {
             // 尝试解析JSON数据
             if let data = dataContent.data(using: .utf8),
                let responseDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                print("解析SSE数据成功: \(responseDict.keys)")
                 await processResponseData(responseDict, modelParts: &modelParts)
+            } else {
+                print("无法解析SSE数据: \(dataContent)")
             }
         }
     }
@@ -112,6 +165,8 @@ class GeminiService {
             
             // 处理文本内容
             if let text = part["text"] as? String, !text.isEmpty {
+                printResponseContent(text, type: "文本")
+                
                 // 检查文本是否包含Markdown格式
                 let markdownPatterns = [
                     "^#+ ", // 标题
@@ -192,12 +247,17 @@ class GeminiService {
                let mimeType = inlineData["mimeType"] as? String,
                mimeType.hasPrefix("image/") {
                 
+                printResponseContent("图像内容: MimeType=\(mimeType), 数据长度=\(data.count)字节", type: "图像")
+                
                 if let imageData = Data(base64Encoded: data) {
+                    print("成功解码图像数据，大小: \(imageData.count)字节")
                     let contentItem = ContentItem(type: .image(imageData), timestamp: Date())
                     currentContentItems.append(contentItem)
                     await MainActor.run {
                         self.currentUpdateHandler?(contentItem)
                     }
+                } else {
+                    print("无法解码Base64图像数据")
                 }
             }
         }
@@ -209,8 +269,12 @@ class GeminiService {
         currentContentItems = []
         isStreamActive = true
         currentUpdateHandler = updateHandler
+        chunkCounter = 0
+        completeStreamLog = "=== 流式生成内容开始 ===\n时间: \(Date())\n请求提示: \(prompt)\n"
+        streamStartTime = Date()
         
-        print("开始流式生成内容，请求提示: \(prompt)")
+        print("\n=== 开始流式生成内容 ===")
+        print("请求提示: \(prompt)")
         
         // 创建URL
         let urlString = "\(baseUrlString)/\(modelName):streamGenerateContent?key=\(geminiApiKey)&alt=sse"
@@ -377,7 +441,19 @@ class GeminiService {
             } else {
                 print("没有收集到任何模型部分，无法添加到聊天历史")
             }
+            
+            // 添加结束信息到日志并保存
+            let elapsedTime = Date().timeIntervalSince(streamStartTime)
+            completeStreamLog += "\n=== 流式生成内容结束 ===\n耗时: \(elapsedTime)秒\n"
+            saveStreamLogToFile()
+            
+            print("=== 流式生成内容结束 ===\n")
         } catch {
+            // 添加错误信息到日志并保存
+            completeStreamLog += "\n=== 流式生成内容出错 ===\n错误: \(error.localizedDescription)\n"
+            saveStreamLogToFile()
+            
+            print("=== 流式生成内容出错 ===\n")
             throw NSError(domain: "GeminiService", code: 1002, userInfo: [NSLocalizedDescriptionKey: "API请求失败: \(error.localizedDescription)"])
         }
     }
@@ -388,8 +464,12 @@ class GeminiService {
         currentContentItems = []
         isStreamActive = true
         currentUpdateHandler = updateHandler
+        chunkCounter = 0
+        completeStreamLog = "=== 流式生成带图片的内容开始 ===\n时间: \(Date())\n请求提示: \(prompt)\n图像尺寸: \(image.size.width) x \(image.size.height)\n"
+        streamStartTime = Date()
         
-        print("开始流式生成带图片的内容，请求提示: \(prompt)")
+        print("\n=== 开始流式生成带图片的内容 ===")
+        print("请求提示: \(prompt)")
         
         // 创建URL
         let urlString = "\(baseUrlString)/\(modelName):streamGenerateContent?key=\(geminiApiKey)&alt=sse"
@@ -575,7 +655,19 @@ class GeminiService {
             } else {
                 print("没有收集到任何模型部分，无法添加到聊天历史")
             }
+            
+            // 添加结束信息到日志并保存
+            let elapsedTime = Date().timeIntervalSince(streamStartTime)
+            completeStreamLog += "\n=== 流式生成带图片的内容结束 ===\n耗时: \(elapsedTime)秒\n"
+            saveStreamLogToFile()
+            
+            print("=== 流式生成带图片的内容结束 ===\n")
         } catch {
+            // 添加错误信息到日志并保存
+            completeStreamLog += "\n=== 流式生成带图片的内容出错 ===\n错误: \(error.localizedDescription)\n"
+            saveStreamLogToFile()
+            
+            print("=== 流式生成带图片的内容出错 ===\n")
             throw NSError(domain: "GeminiService", code: 1002, userInfo: [NSLocalizedDescriptionKey: "API请求失败: \(error.localizedDescription)"])
         }
     }
