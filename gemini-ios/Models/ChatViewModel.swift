@@ -33,8 +33,42 @@ class ChatViewModel: ObservableObject {
         请您耐心等待我处理完成后的效果。
         """
         
-        let assistantMessage = ChatMessage(role: .assistant, content: .markdown(welcomePrompt))
+        print("创建欢迎消息，使用Markdown格式: \(welcomePrompt)")
+        
+        // 直接创建特定内容的欢迎消息
+        let welcomeMessage = """
+        # 欢迎使用Gemini图像处理助手
+        
+        请您上传您想要调整的图片。
+        
+        **一旦您上传图片，我会尝试进行以下调整：**
+        
+        * 提高亮度：使图像整体看起来更明亮
+        * 增加对比度：拉大图像中亮部和暗部的差异，增强层次感和立体感
+        
+        请您耐心等待我处理完成后的效果。
+        """
+        
+        // 确保使用.markdown内容类型
+        let assistantMessage = ChatMessage(role: .assistant, content: .markdown(welcomeMessage))
         messages.append(assistantMessage)
+        
+        // 打印所有消息的类型
+        print("当前所有消息：")
+        for (index, msg) in messages.enumerated() {
+            print("消息 \(index): 角色=\(msg.role), 类型=\(type(of: msg.content))")
+            switch msg.content {
+            case .text(let text):
+                print(" - 文本内容: \(text.prefix(50))...")
+            case .markdown(let md):
+                print(" - Markdown内容: \(md.prefix(50))...")
+            case .mixedContent(let items):
+                print(" - 混合内容，项目数: \(items.count)")
+            case .image:
+                print(" - 图像内容")
+            }
+        }
+        
         objectWillChange.send()  // 确保UI更新
     }
     
@@ -302,62 +336,91 @@ class ChatViewModel: ObservableObject {
             // 跳过空文本
             guard !text.isEmpty else { return }
             
-            // 修剪文本开头和结尾的空白字符，但保留内部格式
-            let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            // 只修剪文本开头和结尾的空白字符，绝对保留内部换行符和格式
+            let trimmedText = text.trimmingCharacters(in: .whitespaces)
             guard !trimmedText.isEmpty else { return }
             
             print("接收到文本: '\(trimmedText)'")
             
-            // 极简处理：如果已有内容项，且最后一项是文本，直接合并
-            if contentItem.isIncremental, let lastIndex = mixedItems.indices.last {
+            // 检查是否包含markdown标记
+            let containsMarkdown = trimmedText.contains("**") || 
+                                   trimmedText.contains("*") || 
+                                   trimmedText.contains("#") || 
+                                   trimmedText.contains("```") ||
+                                   trimmedText.contains("•") || 
+                                   trimmedText.contains("- ") || 
+                                   trimmedText.contains("* ")
+            
+            // 直接合并任何文本，无条件，并保留所有换行符
+            if let lastIndex = mixedItems.indices.last {
                 if case .text(let existingText, let id) = mixedItems[lastIndex] {
-                    // 直接合并文本，不处理任何特殊情况
-                    mixedItems[lastIndex] = .text(existingText + trimmedText, id)
-                    print("已合并到现有文本")
+                    // 直接合并文本，保留所有换行符和格式
+                    let newText = existingText + trimmedText
+                    // 如果检测到markdown标记，转换为markdown类型
+                    if containsMarkdown {
+                        mixedItems[lastIndex] = .markdown(newText, id)
+                        print("升级并合并到markdown: '\(existingText)' + '\(trimmedText)'")
+                    } else {
+                        mixedItems[lastIndex] = .text(newText, id)
+                        print("已合并到现有文本: '\(existingText)' + '\(trimmedText)'")
+                    }
                 } else if case .markdown(let existingText, let id) = mixedItems[lastIndex] {
-                    // 如果最后一项是markdown，也直接合并
-                    mixedItems[lastIndex] = .markdown(existingText + trimmedText, id)
-                    print("已合并到现有markdown")
+                    // 直接合并到markdown
+                    let newText = existingText + trimmedText
+                    mixedItems[lastIndex] = .markdown(newText, id)
+                    print("已合并到现有markdown: '\(existingText)' + '\(trimmedText)'")
                 } else {
-                    // 如果最后一项不是文本或markdown，添加新文本项
-                    mixedItems.append(.text(trimmedText))
-                    print("添加为新文本项")
+                    // 创建新项
+                    if containsMarkdown {
+                        mixedItems.append(.markdown(trimmedText))
+                        print("添加为新markdown项: '\(trimmedText)'")
+                    } else {
+                        mixedItems.append(.text(trimmedText))
+                        print("添加为新文本项: '\(trimmedText)'")
+                    }
                 }
             } else {
-                // 第一个内容项或非增量内容
-                mixedItems.append(.text(trimmedText))
-                print("添加为新文本项")
+                // 创建第一个项
+                if containsMarkdown {
+                    mixedItems.append(.markdown(trimmedText))
+                    print("添加为第一个markdown项: '\(trimmedText)'")
+                } else {
+                    mixedItems.append(.text(trimmedText))
+                    print("添加为第一个文本项: '\(trimmedText)'")
+                }
             }
             
         case .markdown(let markdownText):
             // 跳过空markdown
             guard !markdownText.isEmpty else { return }
             
-            // 修剪markdown文本开头和结尾的空白字符，但保留内部格式
-            let trimmedMarkdown = markdownText.trimmingCharacters(in: .whitespacesAndNewlines)
+            // 只修剪markdown文本开头和结尾的空白字符，绝对保留内部换行和格式
+            let trimmedMarkdown = markdownText.trimmingCharacters(in: .whitespaces)
             guard !trimmedMarkdown.isEmpty else { return }
             
             print("接收到markdown: '\(trimmedMarkdown)'")
             
-            // 极简处理：如果已有内容项，且最后一项是markdown，直接合并
-            if contentItem.isIncremental, let lastIndex = mixedItems.indices.last {
+            // 直接合并任何markdown，保留所有换行符
+            if let lastIndex = mixedItems.indices.last {
                 if case .markdown(let existingText, let id) = mixedItems[lastIndex] {
-                    // 直接合并markdown，不处理任何特殊情况
-                    mixedItems[lastIndex] = .markdown(existingText + trimmedMarkdown, id)
-                    print("已合并到现有markdown")
+                    // 直接合并markdown
+                    let newText = existingText + trimmedMarkdown
+                    mixedItems[lastIndex] = .markdown(newText, id)
+                    print("已合并到现有markdown: '\(existingText)' + '\(trimmedMarkdown)'")
                 } else if case .text(let existingText, let id) = mixedItems[lastIndex] {
-                    // 如果最后一项是文本，也直接合并
-                    mixedItems[lastIndex] = .text(existingText + trimmedMarkdown, id)
-                    print("已合并到现有文本")
+                    // 直接合并到文本并升级为markdown
+                    let newText = existingText + trimmedMarkdown
+                    mixedItems[lastIndex] = .markdown(newText, id)
+                    print("升级并合并到markdown: '\(existingText)' + '\(trimmedMarkdown)'")
                 } else {
-                    // 如果最后一项不是文本或markdown，添加新markdown项
+                    // 创建新markdown项
                     mixedItems.append(.markdown(trimmedMarkdown))
-                    print("添加为新markdown项")
+                    print("添加为新markdown项: '\(trimmedMarkdown)'")
                 }
             } else {
-                // 第一个内容项或非增量内容
+                // 创建新markdown项
                 mixedItems.append(.markdown(trimmedMarkdown))
-                print("添加为新markdown项")
+                print("添加为第一个markdown项: '\(trimmedMarkdown)'")
             }
             
         case .image(let imageData):
@@ -372,16 +435,8 @@ class ChatViewModel: ObservableObject {
         
         // 仅当有内容变化时才更新
         if !mixedItems.isEmpty {
-            // 简化处理：直接更新消息，不进行优化
-            messages[messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id })!].content = .mixedContent(mixedItems)
-            
-            // 更新引用
-            currentlyGeneratingMessage = messages[messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id })!]
-            
-            // 触发UI更新
-            objectWillChange.send()
-            
-            print("更新消息完成，当前项数: \(mixedItems.count)")
+            // 保存所有修改后的内容
+            updateGeneratingMessageWithItems(mixedItems)
         }
     }
     
@@ -405,63 +460,25 @@ class ChatViewModel: ObservableObject {
     }
     
     // 使用示例提示
-    func useExamplePrompt(type: ExamplePromptType) {
-        // 根据类型选择不同的示例提示
-        var prompt = ""
-        
+    func useExamplePrompt(type: PromptExampleType) {
         switch type {
         case .imageEdit:
-            prompt = """
-            **图像编辑助手**
-            
-            上传一张照片，我可以帮你:
-            • 调整亮度和对比度
-            • 增强细节和锐度
-            • 应用艺术滤镜效果
-            • 移除不需要的元素
-            
-            请上传你想编辑的图片，并告诉我你想要的效果。
-            """
-            
+            inputMessage = "生成一个未来城市的图像，它拥有飞行汽车和高耸入云的摩天大楼。"
         case .storyGeneration:
-            prompt = """
-            **创意故事生成器**
-            
-            我可以根据你的想法创作引人入胜的故事。
-            
-            提供以下要素，我将为你创作一个完整的故事:
-            • 主角特点（年龄、性格等）
-            • 故事发生的背景/时代
-            • 核心冲突或挑战
-            • 故事主题或你希望传达的信息
-            
-            请分享你的创意元素！
-            """
-            
+            inputMessage = "写一个关于探索外星球的短篇科幻故事。"
         case .designGeneration:
-            prompt = """
-            **UI/UX设计助手**
-            
-            我可以帮你:
-            • 生成设计理念和灵感
-            • 分析设计趋势和最佳实践
-            • 提供色彩搭配建议
-            • 评估界面布局和用户体验
-            
-            请描述你的设计项目和需求，我会提供专业建议。
-            """
+            inputMessage = "创建一个现代简约风格的网站首页设计，针对一家高端咖啡品牌。"
         }
         
-        // 添加AI助手消息
-        let assistantMessage = ChatMessage(role: .assistant, content: .markdown(prompt))
-        messages.removeAll() // 清除现有消息
-        messages.append(assistantMessage)
-        objectWillChange.send()
+        // 立即发送示例提示
+        Task {
+            await sendMessage()
+        }
     }
 }
 
 // 示例提示类型
-enum ExamplePromptType {
+enum PromptExampleType {
     case imageEdit
     case storyGeneration
     case designGeneration

@@ -70,6 +70,22 @@ struct MainView: View {
                         .cornerRadius(10)
                         .padding(.horizontal)
                     }
+                    
+                    // Markdown测试页面
+                    NavigationLink(destination: MarkdownTestView()) {
+                        HStack {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.headline)
+                            Text("Markdown渲染测试")
+                                .font(.headline)
+                        }
+                        .foregroundColor(.white)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.green)
+                        .cornerRadius(10)
+                        .padding(.horizontal)
+                    }
                 }
                 
                 Spacer()

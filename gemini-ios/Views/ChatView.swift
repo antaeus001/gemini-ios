@@ -3,6 +3,44 @@ import UIKit
 import PhotosUI
 import MarkdownUI
 
+// 测试Markdown渲染视图
+struct MarkdownTestView: View {
+    let markdownText = """
+    # 测试标题
+
+    这是**粗体文本**和*斜体文本*。
+
+    ## 列表测试
+    
+    * 列表项1
+    * 列表项2
+    * 列表项3
+    
+    ```swift
+    let code = "代码块测试"
+    print(code)
+    ```
+    """
+    
+    var body: some View {
+        VStack {
+            Text("测试原始文本").font(.headline)
+            Text(markdownText)
+                .padding()
+                .background(Color.gray.opacity(0.2))
+                .cornerRadius(8)
+            
+            Text("测试Markdown渲染").font(.headline)
+            Markdown(markdownText)
+                .markdownTheme(Theme.custom)
+                .padding()
+                .background(Color.blue.opacity(0.2))
+                .cornerRadius(8)
+        }
+        .padding()
+    }
+}
+
 // 自定义Markdown主题
 extension Theme {
     static var custom: Theme {
@@ -224,6 +262,16 @@ struct MessageView: View {
     @State private var imageScale: CGFloat = 1.0
     @State private var viewId = UUID() // 添加唯一ID用于强制刷新
     
+    // 检查是否为欢迎消息
+    private var isWelcomeMessage: Bool {
+        if message.role == .assistant,
+           case .markdown(let content) = message.content,
+           content.contains("请您上传您想要调整的图片") {
+            return true
+        }
+        return false
+    }
+    
     var body: some View {
         HStack {
             if message.role == .user {
@@ -260,7 +308,7 @@ struct MessageView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     
                 case .markdown(let markdownText):
-                    // 直接使用Markdown组件渲染，确保没有额外处理
+                    // 直接使用Markdown组件渲染，确保保留所有格式
                     Markdown(markdownText)
                         .textSelection(.enabled)
                         .markdownTheme(Theme.custom)
@@ -268,6 +316,12 @@ struct MessageView: View {
                         .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
                         .cornerRadius(10)
                         .fixedSize(horizontal: false, vertical: true)
+                        .onAppear {
+                            print("渲染Markdown内容，长度: \(markdownText.count), 前缀: \(markdownText.prefix(50))")
+                            // 打印所有换行符位置
+                            let newlineIndexes = markdownText.indices.filter { markdownText[$0] == "\n" }
+                            print("换行符位置: \(newlineIndexes.count)个")
+                        }
                     
                 case .image(let image):
                     Image(uiImage: image)
@@ -287,17 +341,29 @@ struct MessageView: View {
                     
                 case .mixedContent(let items):
                     VStack(alignment: .leading, spacing: 0) {
-                        // 分别处理不同类型的内容项
                         ForEach(items) { item in
                             switch item {
                             case .text(let text, _):
-                                // 统一使用Text渲染，不进行条件判断
-                                Text(text)
-                                    .textSelection(.enabled)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                // 检测text内容是否包含markdown格式
+                                if text.contains("**") || text.contains("*") || 
+                                   text.contains("#") || text.contains("```") || 
+                                   text.contains("•") || text.contains("- ") || 
+                                   text.contains("* ") {
+                                    // 如果包含markdown标记，使用Markdown渲染
+                                    Markdown(text)
+                                        .textSelection(.enabled)
+                                        .markdownTheme(Theme.custom)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .padding(4)
+                                } else {
+                                    // 否则使用普通Text渲染
+                                    Text(text)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                                 
                             case .markdown(let markdownText, _):
-                                // Markdown内容
+                                // Markdown内容，始终使用Markdown组件渲染
                                 Markdown(markdownText)
                                     .textSelection(.enabled)
                                     .markdownTheme(Theme.custom)
@@ -334,6 +400,29 @@ struct MessageView: View {
                 viewId = UUID()
             }
             .id(viewId) // 使用viewId强制刷新
+            .onAppear {
+                // 打印调试信息
+                switch message.content {
+                case .text(let text):
+                    print("显示文本消息: \(text.prefix(30))...")
+                case .markdown(let mdText):
+                    print("显示Markdown消息: \(mdText.prefix(30))...")
+                case .mixedContent(let items):
+                    print("显示混合内容消息，项目数: \(items.count)")
+                    for (index, item) in items.enumerated() {
+                        switch item {
+                        case .text(let text, _):
+                            print("  项目 \(index): 文本类型，内容: \(text.prefix(30))...")
+                        case .markdown(let mdText, _):
+                            print("  项目 \(index): Markdown类型，内容: \(mdText.prefix(30))...")
+                        case .image:
+                            print("  项目 \(index): 图像类型")
+                        }
+                    }
+                case .image:
+                    print("显示图像消息")
+                }
+            }
             
             if message.role == .assistant {
                 Spacer()

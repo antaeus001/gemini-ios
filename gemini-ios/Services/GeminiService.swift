@@ -192,51 +192,71 @@ class GeminiService {
                     }
                     return false
                 }
-                
-                if containsMarkdown {
-                    // 如果包含Markdown，使用markdown类型处理
-                    // 检查是否有当前内容项，并且最后一个是markdown类型
-                    if let lastIndex = currentContentItems.indices.last,
-                       case .markdown(let lastText) = currentContentItems[lastIndex].type,
-                       !text.hasPrefix("\n") && lastText.count > 0 {
-                        // 将新文本追加到最后一个markdown内容项的记录中
+
+                // 完全简化文本处理逻辑，保留换行符
+                // 无论是markdown还是普通文本，如果增量内容直接追加，保留所有格式
+                if let lastIndex = currentContentItems.indices.last {
+                    if case .markdown(let lastText) = currentContentItems[lastIndex].type {
+                        // 更新服务器端记录，保留所有换行和格式
                         let updatedText = lastText + text
                         currentContentItems[lastIndex] = ContentItem(type: .markdown(updatedText), timestamp: Date())
                         
-                        // 只发送增量的文本给UI更新
+                        // 发送增量文本给UI更新，标记为增量
                         let incrementalItem = ContentItem(type: .markdown(text), timestamp: Date(), isIncremental: true)
                         await MainActor.run {
+                            print("发送增量markdown: '\(text)'")
                             self.currentUpdateHandler?(incrementalItem)
                         }
+                    } else if case .text(let lastText) = currentContentItems[lastIndex].type {
+                        // 检查是否有markdown标记
+                        let containsMarkdown = containsMarkdown || text.contains("**") || 
+                                              text.contains("*") || text.contains("#") || 
+                                              text.contains("```") || text.contains("- ") || 
+                                              text.contains("* ") || text.contains("•")
+                        
+                        if containsMarkdown {
+                            // 如果发现markdown标记，将整个内容升级为markdown
+                            let updatedText = lastText + text
+                            currentContentItems[lastIndex] = ContentItem(type: .markdown(updatedText), timestamp: Date())
+                            
+                            // 发送增量文本，但标记为markdown类型
+                            let incrementalItem = ContentItem(type: .markdown(text), timestamp: Date(), isIncremental: true)
+                            await MainActor.run {
+                                print("发现markdown标记，升级并发送增量markdown: '\(text)'")
+                                self.currentUpdateHandler?(incrementalItem)
+                            }
+                        } else {
+                            // 更新服务器端记录，保留所有换行和格式
+                            let updatedText = lastText + text
+                            currentContentItems[lastIndex] = ContentItem(type: .text(updatedText), timestamp: Date())
+                            
+                            // 发送增量文本给UI更新
+                            let incrementalItem = ContentItem(type: .text(text), timestamp: Date(), isIncremental: true)
+                            await MainActor.run {
+                                print("发送增量文本: '\(text)'")
+                                self.currentUpdateHandler?(incrementalItem)
+                            }
+                        }
                     } else {
-                        // 创建新的完整markdown内容项
-                        let contentItem = ContentItem(type: .markdown(text), timestamp: Date())
+                        // 创建新的内容项
+                        let contentItem = containsMarkdown ? 
+                            ContentItem(type: .markdown(text), timestamp: Date()) :
+                            ContentItem(type: .text(text), timestamp: Date())
                         currentContentItems.append(contentItem)
                         await MainActor.run {
+                            print("发送新内容项: '\(text)'")
                             self.currentUpdateHandler?(contentItem)
                         }
                     }
                 } else {
-                    // 普通文本处理，保持原来的逻辑
-                    if let lastIndex = currentContentItems.indices.last,
-                       case .text(let lastText) = currentContentItems[lastIndex].type,
-                       !text.hasPrefix("\n") && lastText.count > 0 {
-                        // 将新文本追加到最后一个文本内容项的记录中
-                        let updatedText = lastText + text
-                        currentContentItems[lastIndex] = ContentItem(type: .text(updatedText), timestamp: Date())
-                        
-                        // 只发送增量的文本给UI更新
-                        let incrementalItem = ContentItem(type: .text(text), timestamp: Date(), isIncremental: true)
-                        await MainActor.run {
-                            self.currentUpdateHandler?(incrementalItem)
-                        }
-                    } else {
-                        // 创建新的完整内容项
-                        let contentItem = ContentItem(type: .text(text), timestamp: Date())
-                        currentContentItems.append(contentItem)
-                        await MainActor.run {
-                            self.currentUpdateHandler?(contentItem)
-                        }
+                    // 创建第一个内容项
+                    let contentItem = containsMarkdown ? 
+                        ContentItem(type: .markdown(text), timestamp: Date()) :
+                        ContentItem(type: .text(text), timestamp: Date())
+                    currentContentItems.append(contentItem)
+                    await MainActor.run {
+                        print("发送第一个内容项: '\(text)'")
+                        self.currentUpdateHandler?(contentItem)
                     }
                 }
             }
