@@ -3,11 +3,23 @@ import UIKit
 import PhotosUI
 
 struct ChatView: View {
-    @StateObject private var viewModel = ChatViewModel()
+    @StateObject private var viewModel: ChatViewModel
     @State private var showingExamples = false
     @State private var imagePickerVisible = false
     @State private var selectedImage: UIImage?
     @State private var photoItem: PhotosPickerItem?
+    
+    // 修复MainActor初始化问题
+    init(viewModel: ChatViewModel? = nil) {
+        // 如果传入了viewModel就使用它，否则创建一个新的
+        if let viewModel = viewModel {
+            _viewModel = StateObject(wrappedValue: viewModel)
+        } else {
+            // 使用Task创建，因为MainActor初始化是异步的
+            let tempViewModel = ChatViewModel()
+            _viewModel = StateObject(wrappedValue: tempViewModel)
+        }
+    }
     
     func scrollToBottom() {
         if let lastMessage = viewModel.messages.last {

@@ -37,16 +37,39 @@ struct MainView: View {
                 
                 Spacer()
                 
-                // 进入聊天按钮
-                NavigationLink(destination: ChatView()) {
-                    Text("开始对话")
-                        .font(.headline)
+                // 导航按钮
+                VStack(spacing: 15) {
+                    // 进入样例画廊
+                    NavigationLink(destination: ExamplesView()) {
+                        HStack {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.headline)
+                            Text("浏览样例功能")
+                                .font(.headline)
+                        }
+                        .foregroundColor(.white)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.purple)
+                        .cornerRadius(10)
+                        .padding(.horizontal)
+                    }
+                    
+                    // 进入聊天按钮
+                    NavigationLink(destination: ChatView()) {
+                        HStack {
+                            Image(systemName: "message.fill")
+                                .font(.headline)
+                            Text("开始对话")
+                                .font(.headline)
+                        }
                         .foregroundColor(.white)
                         .padding()
                         .frame(maxWidth: .infinity)
                         .background(Color.blue)
                         .cornerRadius(10)
                         .padding(.horizontal)
+                    }
                 }
                 
                 Spacer()
