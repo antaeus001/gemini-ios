@@ -308,52 +308,15 @@ struct MessageView: View {
     @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
-        ZStack {
-            // 正常的消息内容
-            if enlargedImage == nil {
-                messageContent
-            }
-            
-            // 放大的图片覆盖层
-            if let image = enlargedImage {
-                ZStack {
-                    // 背景遮罩
-                    Color(.systemBackground)
-                        .edgesIgnoringSafeArea(.all)
-                    
-                    // 图片和控制按钮
-                    VStack(spacing: 0) {
-                        // 顶部工具栏
-                        HStack {
-                            Button {
-                                enlargedImage = nil
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.title3)
-                                    .foregroundColor(.primary)
-                                    .padding(12)
-                                    .background(Circle().fill(Color(.systemGray6)))
-                            }
-                            .padding(.leading, 20)
-                            
-                            Spacer()
-                        }
-                        .padding(.top, 50)
-                        .padding(.bottom, 20)
-                        
-                        // 图片显示 - 占满中间区域
-                        Spacer()
-                        ImageViewer(image: image, onClose: {
-                            enlargedImage = nil
-                        })
-                        Spacer()
-                    }
+        messageContent
+            .fullScreenCover(item: Binding(
+                get: { enlargedImage.map { ImageViewerData(image: $0) } },
+                set: { enlargedImage = $0?.image }
+            )) { imageData in
+                ImageViewerSheet(image: imageData.image) {
+                    enlargedImage = nil
                 }
-                .zIndex(999) // 确保在最上层
-                .transition(.opacity)
-                .edgesIgnoringSafeArea(.all)
             }
-        }
     }
     
     // 用户头像颜色
@@ -541,106 +504,14 @@ struct MessageView: View {
     }
 }
 
-// 气泡形状
-struct BubbleShape: Shape {
-    let isFromCurrentUser: Bool
-    
-    func path(in rect: CGRect) -> Path {
-        let cornerRadius: CGFloat = 16
-        let triangleSize: CGFloat = 8
-        
-        var path = Path()
-        
-        if isFromCurrentUser {
-            // 右边的三角形气泡
-            path.move(to: CGPoint(x: rect.maxX - triangleSize, y: rect.minY + cornerRadius + triangleSize))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cornerRadius))
-            path.addLine(to: CGPoint(x: rect.maxX - triangleSize, y: rect.minY + cornerRadius))
-            
-            // 其余的圆角矩形
-            path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.minY))
-            path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius),
-                        radius: cornerRadius, startAngle: Angle(degrees: -90), endAngle: Angle(degrees: 180), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - cornerRadius))
-            path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY - cornerRadius),
-                        radius: cornerRadius, startAngle: Angle(degrees: 180), endAngle: Angle(degrees: 90), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY))
-            path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY - cornerRadius),
-                        radius: cornerRadius, startAngle: Angle(degrees: 90), endAngle: Angle(degrees: 0), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cornerRadius + triangleSize))
-        } else {
-            // 左边的三角形气泡
-            path.move(to: CGPoint(x: rect.minX + triangleSize, y: rect.minY + cornerRadius + triangleSize))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius))
-            path.addLine(to: CGPoint(x: rect.minX + triangleSize, y: rect.minY + cornerRadius))
-            
-            // 其余的圆角矩形
-            path.addLine(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY))
-            path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius),
-                        radius: cornerRadius, startAngle: Angle(degrees: -90), endAngle: Angle(degrees: 0), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cornerRadius))
-            path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY - cornerRadius),
-                        radius: cornerRadius, startAngle: Angle(degrees: 0), endAngle: Angle(degrees: 90), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY))
-            path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY - cornerRadius),
-                        radius: cornerRadius, startAngle: Angle(degrees: 90), endAngle: Angle(degrees: 180), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius + triangleSize))
-        }
-        
-        return path
-    }
+// 用于fullScreenCover的数据模型
+struct ImageViewerData: Identifiable {
+    let id = UUID()
+    let image: UIImage
 }
 
-// 输入指示器
-struct TypingIndicator: View {
-    @State private var animationOffset = 0.0
-    
-    var body: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<3) { index in
-                Circle()
-                    .fill(Color.gray.opacity(0.6))
-                    .frame(width: 5, height: 5)
-                    .offset(y: sin(animationOffset + Double(index) * 0.5) * 2)
-                    .opacity(0.5 + sin(animationOffset + Double(index) * 0.5) * 0.5)
-            }
-        }
-        .padding(.vertical, 2)
-        .padding(.horizontal, 4)
-        .onAppear {
-            withAnimation(Animation.linear(duration: 1.5).repeatForever(autoreverses: false)) {
-                animationOffset = 2 * .pi
-            }
-        }
-    }
-}
-
-// 图片保存工具类 - 处理保存回调
-class ImageSaver: NSObject {
-    var completion: (Bool, Error?) -> Void
-    
-    init(completion: @escaping (Bool, Error?) -> Void) {
-        self.completion = completion
-        super.init()
-    }
-    
-    // 图片保存回调
-    @objc func image(_ image: UIImage, didFinishSavingWithError error: Error?, contextInfo: UnsafeRawPointer) {
-        if let error = error {
-            completion(false, error)
-        } else {
-            completion(true, nil)
-        }
-    }
-    
-    // 保存图片到相册
-    func saveToPhotos(image: UIImage) {
-        UIImageWriteToSavedPhotosAlbum(image, self, #selector(self.image(_:didFinishSavingWithError:contextInfo:)), nil)
-    }
-}
-
-// 带手势支持的图片查看器组件
-struct ImageViewer: View {
+// 图片查看器Sheet视图
+struct ImageViewerSheet: View {
     let image: UIImage
     let onClose: () -> Void
     @Environment(\.colorScheme) var colorScheme
@@ -653,108 +524,115 @@ struct ImageViewer: View {
     @State private var saveAlertMessage = ""
     
     var body: some View {
-        ZStack {
-            // 图片区域
-            Image(uiImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .scaleEffect(scale)
-                .offset(offset)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .gesture(
-                    MagnificationGesture()
-                        .onChanged { value in
-                            let delta = value / lastScale
-                            lastScale = value
-                            // 限制缩放范围
-                            let newScale = scale * delta
-                            scale = min(max(newScale, 0.5), 5.0)
-                        }
-                        .onEnded { _ in
-                            lastScale = 1.0
-                        }
-                )
-                .gesture(
-                    DragGesture()
-                        .onChanged { value in
-                            let newOffset = CGSize(
-                                width: lastOffset.width + value.translation.width,
-                                height: lastOffset.height + value.translation.height
-                            )
-                            offset = newOffset
-                        }
-                        .onEnded { _ in
-                            lastOffset = offset
-                        }
-                )
-                .gesture(
-                    TapGesture(count: 2)
-                        .onEnded {
-                            withAnimation {
-                                if scale > 1.5 {
-                                    // 如果放大了，双击恢复原始大小
-                                    scale = 1.0
-                                    offset = .zero
-                                    lastOffset = .zero
-                                } else {
-                                    // 如果是原始大小，双击放大到2倍
-                                    scale = 2.0
+        GeometryReader { geometry in
+            ZStack {
+                Color(.systemBackground)
+                    .edgesIgnoringSafeArea(.all)
+                
+                // 图片区域
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .scaleEffect(scale)
+                    .offset(offset)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .gesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                let delta = value / lastScale
+                                lastScale = value
+                                // 限制缩放范围
+                                let newScale = scale * delta
+                                scale = min(max(newScale, 0.5), 5.0)
+                            }
+                            .onEnded { _ in
+                                lastScale = 1.0
+                            }
+                    )
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                let newOffset = CGSize(
+                                    width: lastOffset.width + value.translation.width,
+                                    height: lastOffset.height + value.translation.height
+                                )
+                                offset = newOffset
+                            }
+                            .onEnded { _ in
+                                lastOffset = offset
+                            }
+                    )
+                    .gesture(
+                        TapGesture(count: 2)
+                            .onEnded {
+                                withAnimation {
+                                    if scale > 1.5 {
+                                        // 如果放大了，双击恢复原始大小
+                                        scale = 1.0
+                                        offset = .zero
+                                        lastOffset = .zero
+                                    } else {
+                                        // 如果是原始大小，双击放大到2倍
+                                        scale = 2.0
+                                    }
                                 }
                             }
-                        }
-                )
-                .onTapGesture {
-                    // 单击关闭（仅当未放大时）
-                    if scale <= 1.1 {
-                        onClose()
-                    }
-                }
-            
-            // 工具按钮浮层
-            VStack {
-                HStack {
-                    // 直接保存到相册按钮
-                    Button {
-                        saveImageDirectlyToPhotos()
-                    } label: {
-                        HStack {
-                            Image(systemName: "photo")
+                    )
+                
+                // 顶部工具栏
+                VStack {
+                    HStack {
+                        Button {
+                            onClose()
+                        } label: {
+                            Image(systemName: "xmark")
                                 .font(.title3)
-                            Text("保存")
-                                .font(.subheadline)
+                                .foregroundColor(.primary)
+                                .padding(12)
+                                .background(Circle().fill(Color(.systemGray6)))
                         }
-                        .foregroundColor(.primary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Capsule().fill(Color(.systemGray6)))
+                        
+                        Spacer()
+                        
+                        // 分享按钮
+                        Button {
+                            saveImageToPhotos()
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.title3)
+                                .foregroundColor(.primary)
+                                .padding(12)
+                                .background(Circle().fill(Color(.systemGray6)))
+                        }
+                        
+                        // 直接保存到相册按钮
+                        Button {
+                            saveImageDirectlyToPhotos()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "photo")
+                                    .font(.title3)
+                                Text("保存")
+                                    .font(.subheadline)
+                            }
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(Color(.systemGray6)))
+                        }
                     }
-                    .padding(.leading, 20)
+                    .padding(.horizontal, 20)
+                    .padding(.top, geometry.safeAreaInsets.top + 10)
                     
                     Spacer()
-                    
-                    // 分享按钮
-                    Button {
-                        saveImageToPhotos()
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.title)
-                            .foregroundColor(.primary)
-                            .padding(12)
-                            .background(Circle().fill(Color(.systemGray6)))
-                    }
-                    .padding(.trailing, 20)
                 }
-                
-                Spacer()
             }
-            .padding(.top, 20)
-        }
-        .onAppear {
-            print("图片查看器已显示，尺寸: \(image.size.width) x \(image.size.height)")
         }
         .alert(isPresented: $showSaveAlert) {
             Alert(title: Text("提示"), message: Text(saveAlertMessage), dismissButton: .default(Text("确定")))
         }
+        .ignoresSafeArea()
+        .statusBar(hidden: true)
     }
     
     // 直接保存到相册
@@ -852,6 +730,104 @@ struct ImageViewer: View {
             self.saveAlertMessage = "保存图片失败: \(error.localizedDescription)"
             self.showSaveAlert = true
         }
+    }
+}
+
+// 气泡形状
+struct BubbleShape: Shape {
+    let isFromCurrentUser: Bool
+    
+    func path(in rect: CGRect) -> Path {
+        let cornerRadius: CGFloat = 16
+        let triangleSize: CGFloat = 8
+        
+        var path = Path()
+        
+        if isFromCurrentUser {
+            // 右边的三角形气泡
+            path.move(to: CGPoint(x: rect.maxX - triangleSize, y: rect.minY + cornerRadius + triangleSize))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cornerRadius))
+            path.addLine(to: CGPoint(x: rect.maxX - triangleSize, y: rect.minY + cornerRadius))
+            
+            // 其余的圆角矩形
+            path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.minY))
+            path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius),
+                        radius: cornerRadius, startAngle: Angle(degrees: -90), endAngle: Angle(degrees: 180), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - cornerRadius))
+            path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY - cornerRadius),
+                        radius: cornerRadius, startAngle: Angle(degrees: 180), endAngle: Angle(degrees: 90), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY))
+            path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY - cornerRadius),
+                        radius: cornerRadius, startAngle: Angle(degrees: 90), endAngle: Angle(degrees: 0), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cornerRadius + triangleSize))
+        } else {
+            // 左边的三角形气泡
+            path.move(to: CGPoint(x: rect.minX + triangleSize, y: rect.minY + cornerRadius + triangleSize))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius))
+            path.addLine(to: CGPoint(x: rect.minX + triangleSize, y: rect.minY + cornerRadius))
+            
+            // 其余的圆角矩形
+            path.addLine(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY))
+            path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius),
+                        radius: cornerRadius, startAngle: Angle(degrees: -90), endAngle: Angle(degrees: 0), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cornerRadius))
+            path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY - cornerRadius),
+                        radius: cornerRadius, startAngle: Angle(degrees: 0), endAngle: Angle(degrees: 90), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY))
+            path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY - cornerRadius),
+                        radius: cornerRadius, startAngle: Angle(degrees: 90), endAngle: Angle(degrees: 180), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius + triangleSize))
+        }
+        
+        return path
+    }
+}
+
+// 输入指示器
+struct TypingIndicator: View {
+    @State private var animationOffset = 0.0
+    
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3) { index in
+                Circle()
+                    .fill(Color.gray.opacity(0.6))
+                    .frame(width: 5, height: 5)
+                    .offset(y: sin(animationOffset + Double(index) * 0.5) * 2)
+                    .opacity(0.5 + sin(animationOffset + Double(index) * 0.5) * 0.5)
+            }
+        }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 4)
+        .onAppear {
+            withAnimation(Animation.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                animationOffset = 2 * .pi
+            }
+        }
+    }
+}
+
+// 图片保存工具类 - 处理保存回调
+class ImageSaver: NSObject {
+    var completion: (Bool, Error?) -> Void
+    
+    init(completion: @escaping (Bool, Error?) -> Void) {
+        self.completion = completion
+        super.init()
+    }
+    
+    // 图片保存回调
+    @objc func image(_ image: UIImage, didFinishSavingWithError error: Error?, contextInfo: UnsafeRawPointer) {
+        if let error = error {
+            completion(false, error)
+        } else {
+            completion(true, nil)
+        }
+    }
+    
+    // 保存图片到相册
+    func saveToPhotos(image: UIImage) {
+        UIImageWriteToSavedPhotosAlbum(image, self, #selector(self.image(_:didFinishSavingWithError:contextInfo:)), nil)
     }
 }
 
