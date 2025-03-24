@@ -91,7 +91,11 @@ struct ChatView: View {
     @State private var messageCounter: Int = 0
     @FocusState private var isInputFocused: Bool
     @State private var isScrolledToBottom = true // 新增：跟踪是否已滚动到底部
-    @State private var lastScrollTime: TimeInterval = 0
+    @State private var lastScrollTime: Date = Date()
+    
+    // 缓存计算的高度以避免频繁重新计算
+    @State private var cachedTextEditorHeight: CGFloat = 37 // 单行默认高度
+    @State private var lastInputText: String = ""
     
     // 修复MainActor初始化问题
     init(viewModel: ChatViewModel? = nil) {
@@ -107,13 +111,12 @@ struct ChatView: View {
     
     func scrollToBottom() {
         if isScrolledToBottom, let lastMessage = viewModel.messages.last {
-            // 降低滚动频率，使用防抖技术
-            let now = Date().timeIntervalSince1970
-            if now - lastScrollTime > 0.3 { // 300ms防抖
+            // 限制滚动频率
+            let now = Date()
+            if now.timeIntervalSince(lastScrollTime) > 0.5 {
                 DispatchQueue.main.async {
-                    // 移除动画，减少渲染负担
                     scrollViewProxy?.scrollTo(lastMessage.id, anchor: .bottom)
-                    lastScrollTime = now
+                    lastScrollTime = Date()
                 }
             }
         }
@@ -131,26 +134,25 @@ struct ChatView: View {
                             MessageView(message: message)
                                 .id(message.id)
                                 .onChange(of: message.content) { _, _ in
-                                    // 只在最后一条消息内容变化时滚动
-                                    if message.id == viewModel.messages.last?.id && message.isGenerating {
+                                    // 最后一条消息内容变化时执行批处理滚动
+                                    if message.id == viewModel.messages.last?.id && isScrolledToBottom {
+                                        // 使用防抖动滚动
                                         scrollToBottom()
                                     }
                                 }
-                                .transition(.opacity)
                         }
                         .padding(.horizontal)
                     }
                     .padding(.vertical, 10)
-                    // 移除使用计数器作为ID，避免整个ScrollView重建
+                    // 优化动画设置
+                    .animationsDisabled(viewModel.isLoading && viewModel.messages.last?.isGenerating == true)
                     .animation(.easeOut(duration: 0.2), value: viewModel.messages.count)
                 }
                 .background(Color(.systemBackground))
                 .onChange(of: viewModel.messages.count) { _, _ in
-                    // 仅在消息数量变化时滚动到底部（新消息发送时）
-                    isScrolledToBottom = true // 重置滚动状态
+                    isScrolledToBottom = true
                     scrollToBottom()
                 }
-                // 使用滚动位置检测器跟踪是否已滚动到底部
                 .overlay(
                     GeometryReader { geo in
                         Color.clear.preference(
@@ -161,14 +163,12 @@ struct ChatView: View {
                 )
                 .coordinateSpace(name: "scrollView")
                 .onPreferenceChange(ScrollViewOffsetPreferenceKey.self) { maxY in
-                    // 获取ScrollView的内容高度和可见区域高度
-                    // 如果用户手动滚动到接近底部，我们认为用户希望保持在底部
                     let scrollViewHeight = UIScreen.main.bounds.height
-                    isScrolledToBottom = maxY <= scrollViewHeight + 50 // 允许50点的误差
+                    isScrolledToBottom = maxY <= scrollViewHeight + 50
                 }
                 .onAppear {
                     scrollViewProxy = scrollView
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         scrollToBottom()
                     }
                 }
@@ -255,11 +255,19 @@ struct ChatView: View {
                         .font(.system(size: 17))
                         .padding(.horizontal, 4)
                         .padding(.vertical, 8)
-                        .frame(height: textEditorHeight())
+                        .frame(height: cachedTextEditorHeight)
                         .background(Color.clear)
                         .scrollContentBackground(.hidden)
                         .disabled(viewModel.isLoading)
                         .lineSpacing(2) // 设置行间距
+                        .onChange(of: viewModel.inputMessage) { oldValue, newValue in
+                            // 仅当文本发生显著变化时才重新计算高度（增加或减少5个字符）
+                            if abs(newValue.count - lastInputText.count) > 5 || 
+                               newValue.contains("\n") != lastInputText.contains("\n") {
+                                cachedTextEditorHeight = textEditorHeight(for: newValue)
+                                lastInputText = newValue
+                            }
+                        }
                 }
                 .padding(8)
                 .background(Color(.systemGray6))
@@ -291,14 +299,14 @@ struct ChatView: View {
             .padding(.horizontal)
             .padding(.vertical, 10)
             .background(Color(.systemBackground))
-            .animation(.easeOut(duration: 0.2), value: viewModel.isLoading)
+            // 移除不必要的动画
+            .animation(nil, value: viewModel.isLoading)
         }
         .background(Color(.secondarySystemBackground))
     }
     
     // 计算输入框高度
-    private func textEditorHeight() -> CGFloat {
-        let text = viewModel.inputMessage
+    private func textEditorHeight(for text: String) -> CGFloat {
         let width = UIScreen.main.bounds.width - 120 // 减去左右边距和其他控件的宽度
         
         let font = UIFont.systemFont(ofSize: 17) // 使用标准字体大小
@@ -325,12 +333,24 @@ struct ChatView: View {
     }
 }
 
+// 添加一个视图修饰符来条件性地禁用动画
+extension View {
+    func animationsDisabled(_ disabled: Bool) -> some View {
+        self.transaction { transaction in
+            if disabled {
+                transaction.animation = nil
+            }
+        }
+    }
+}
+
 // 消息视图
 struct MessageView: View {
     let message: ChatMessage
-    @State private var viewId = UUID()
     @State private var enlargedImage: UIImage? = nil
     @Environment(\.colorScheme) var colorScheme
+    @State private var cachedContent: ChatContentType? = nil
+    @State private var lastUpdateTime: Date = Date()
     
     var body: some View {
         messageContent
@@ -340,6 +360,25 @@ struct MessageView: View {
             )) { imageData in
                 ImageViewerSheet(image: imageData.image) {
                     enlargedImage = nil
+                }
+            }
+            .onAppear {
+                cachedContent = message.content
+            }
+            .onChange(of: message.content) { _, newContent in
+                // 添加防抖动机制，限制更新频率
+                let now = Date()
+                if now.timeIntervalSince(lastUpdateTime) > 0.3 || !message.isGenerating {
+                    cachedContent = newContent
+                    lastUpdateTime = now
+                } else {
+                    // 如果更新太频繁，使用计时器延迟更新
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        if cachedContent != message.content {
+                            cachedContent = message.content
+                            lastUpdateTime = Date()
+                        }
+                    }
                 }
             }
     }
@@ -424,12 +463,17 @@ struct MessageView: View {
             }
         }
         .padding(.vertical, 2)
+        .onChange(of: message.content) { _, _ in
+            // 移除不必要的视图重建
+        }
+        .id(message.id)
     }
     
     // 消息气泡
     private var messageBubble: some View {
         Group {
-            switch message.content {
+            // 使用缓存的内容而不是直接使用message.content
+            switch cachedContent ?? message.content {
             case .text(let text):
                 Text(text)
                     .foregroundColor(colorScheme == .dark ? .white : .black)
@@ -438,9 +482,8 @@ struct MessageView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 
             case .markdown(let markdownText):
-                // 使用简单的缓存策略减少渲染次数
-                CachedMarkdownView(content: markdownText)
-                    .textSelection(.enabled)
+                // 使用延迟加载来降低Markdown渲染的频率
+                LazyMarkdownView(markdownText: markdownText)
                     .padding(12)
                     .fixedSize(horizontal: false, vertical: true)
                 
@@ -475,9 +518,8 @@ struct MessageView: View {
                                text.contains("#") || text.contains("```") || 
                                text.contains("•") || text.contains("- ") || 
                                text.contains("* ") {
-                                Markdown(text)
-                                    .textSelection(.enabled)
-                                    .markdownTheme(Theme.custom)
+                                // 使用延迟加载来降低Markdown渲染的频率
+                                LazyMarkdownView(markdownText: text)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .padding(.vertical, 2)
                             } else {
@@ -489,9 +531,8 @@ struct MessageView: View {
                             }
                             
                         case .markdown(let markdownText, _):
-                            Markdown(markdownText)
-                                .textSelection(.enabled)
-                                .markdownTheme(Theme.custom)
+                            // 使用延迟加载来降低Markdown渲染的频率
+                            LazyMarkdownView(markdownText: markdownText)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(.vertical, 2)
                             
@@ -520,6 +561,31 @@ struct MessageView: View {
                     }
                 }
                 .padding(12)
+            }
+        }
+    }
+}
+
+// 懒加载的Markdown视图，减少渲染频率
+struct LazyMarkdownView: View {
+    let markdownText: String
+    @State private var shouldRender: Bool = false
+    
+    var body: some View {
+        Group {
+            if shouldRender {
+                Markdown(markdownText)
+                    .textSelection(.enabled)
+                    .markdownTheme(Theme.custom)
+            } else {
+                Text(markdownText)
+                    .textSelection(.enabled)
+                    .onAppear {
+                        // 延迟200毫秒再渲染Markdown，减少流式渲染的负担
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            shouldRender = true
+                        }
+                    }
             }
         }
     }
@@ -868,40 +934,6 @@ struct ScrollViewOffsetPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
-    }
-}
-
-// 添加一个缓存Markdown内容的视图结构
-struct CachedMarkdownView: View {
-    let content: String
-    @State private var renderTask: Task<Void, Never>? = nil
-    @State private var renderedContent: String = ""
-    
-    var body: some View {
-        Group {
-            if content.count > 1000 && content != renderedContent {
-                // 对于长内容，先显示普通文本，异步渲染Markdown
-                Text(content)
-                    .textSelection(.enabled)
-                    .onAppear {
-                        // 取消上一个任务
-                        renderTask?.cancel()
-                        // 创建新任务
-                        renderTask = Task {
-                            // 添加延迟，避免频繁渲染
-                            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
-                            if !Task.isCancelled {
-                                await MainActor.run {
-                                    renderedContent = content
-                                }
-                            }
-                        }
-                    }
-            } else {
-                Markdown(content)
-                    .markdownTheme(Theme.custom)
-            }
-        }
     }
 }
 
