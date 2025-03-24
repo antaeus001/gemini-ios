@@ -48,6 +48,14 @@ class GeminiService {
     private let modelName = "gemini-2.0-flash-exp-image-generation"
     private let geminiApiKey = "AIzaSyDtaceYdTFwn4H0RIA6u5fHS-BDUJoEK04"
     
+    // 创建自定义URLSession配置，设置较长的超时时间
+    private lazy var urlSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 600 // 请求超时时间5分钟
+        config.timeoutIntervalForResource = 600 // 资源下载超时时间5分钟
+        return URLSession(configuration: config)
+    }()
+    
     // 状态变量
     var chatHistory: [GeminiChatMessage] = []
     var currentContentItems: [ContentItem] = []
@@ -306,7 +314,7 @@ class GeminiService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60
+        request.timeoutInterval = 180
         
         // 构建用户消息
         let userMessage = GeminiChatMessage(
@@ -375,7 +383,7 @@ class GeminiService {
         print("使用模型: \(modelName)")
         
         do {
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            let (bytes, response) = try await urlSession.bytes(for: request)
             
             // 检查HTTP响应状态
             guard let httpResponse = response as? HTTPURLResponse else {
@@ -470,11 +478,27 @@ class GeminiService {
             print("=== 流式生成内容结束 ===\n")
         } catch {
             // 添加错误信息到日志并保存
-            completeStreamLog += "\n=== 流式生成内容出错 ===\n错误: \(error.localizedDescription)\n"
+            let errorMessage: String
+            if let urlError = error as? URLError {
+                switch urlError.code {
+                case .timedOut:
+                    errorMessage = "请求超时，请重试。对于大型内容生成，可能需要更长的处理时间。"
+                case .notConnectedToInternet:
+                    errorMessage = "网络连接错误，请检查您的网络连接后重试。"
+                case .cancelled:
+                    errorMessage = "请求已取消。"
+                default:
+                    errorMessage = "网络错误: \(urlError.localizedDescription)"
+                }
+            } else {
+                errorMessage = "API请求失败: \(error.localizedDescription)"
+            }
+            
+            completeStreamLog += "\n=== 流式生成内容出错 ===\n错误: \(errorMessage)\n"
             saveStreamLogToFile()
             
-            print("=== 流式生成内容出错 ===\n")
-            throw NSError(domain: "GeminiService", code: 1002, userInfo: [NSLocalizedDescriptionKey: "API请求失败: \(error.localizedDescription)"])
+            print("=== 流式生成内容出错 ===\n错误详情: \(error)")
+            throw NSError(domain: "GeminiService", code: 1002, userInfo: [NSLocalizedDescriptionKey: errorMessage])
         }
     }
     
@@ -501,7 +525,7 @@ class GeminiService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60
+        request.timeoutInterval = 180
         
         // 将图片转换为base64
         guard let imageData = image.jpegData(compressionQuality: 0.8) else {
@@ -589,7 +613,7 @@ class GeminiService {
         print("图片大小: \(image.size.width) x \(image.size.height), 数据大小: \(imageData.count)")
         
         do {
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            let (bytes, response) = try await urlSession.bytes(for: request)
             
             // 检查HTTP响应状态
             guard let httpResponse = response as? HTTPURLResponse else {
@@ -684,11 +708,27 @@ class GeminiService {
             print("=== 流式生成带图片的内容结束 ===\n")
         } catch {
             // 添加错误信息到日志并保存
-            completeStreamLog += "\n=== 流式生成带图片的内容出错 ===\n错误: \(error.localizedDescription)\n"
+            let errorMessage: String
+            if let urlError = error as? URLError {
+                switch urlError.code {
+                case .timedOut:
+                    errorMessage = "请求超时，请重试。对于大型内容生成，可能需要更长的处理时间。"
+                case .notConnectedToInternet:
+                    errorMessage = "网络连接错误，请检查您的网络连接后重试。"
+                case .cancelled:
+                    errorMessage = "请求已取消。"
+                default:
+                    errorMessage = "网络错误: \(urlError.localizedDescription)"
+                }
+            } else {
+                errorMessage = "API请求失败: \(error.localizedDescription)"
+            }
+            
+            completeStreamLog += "\n=== 流式生成带图片的内容出错 ===\n错误: \(errorMessage)\n"
             saveStreamLogToFile()
             
-            print("=== 流式生成带图片的内容出错 ===\n")
-            throw NSError(domain: "GeminiService", code: 1002, userInfo: [NSLocalizedDescriptionKey: "API请求失败: \(error.localizedDescription)"])
+            print("=== 流式生成带图片的内容出错 ===\n错误详情: \(error)")
+            throw NSError(domain: "GeminiService", code: 1002, userInfo: [NSLocalizedDescriptionKey: errorMessage])
         }
     }
 }
