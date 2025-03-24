@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import PhotosUI
 import MarkdownUI
+import Photos
 
 // 测试Markdown渲染视图
 struct MarkdownTestView: View {
@@ -79,6 +80,99 @@ extension Theme {
                     .markdownMargin(top: .em(0.25), bottom: .em(0.25))
                     .fixedSize(horizontal: false, vertical: true)
             }
+    }
+}
+
+// 图片查看器 - 超简单实现
+struct SimpleImageViewer: View {
+    let imageData: Data  // 使用Data而不是UIImage
+    @Binding var isPresented: Bool
+    @State private var uiImage: UIImage?
+    
+    init(imageData: Data, isPresented: Binding<Bool>) {
+        self.imageData = imageData
+        self._isPresented = isPresented
+        print("初始化SimpleImageViewer，数据大小：\(imageData.count)字节")
+    }
+    
+    var body: some View {
+        ZStack {
+            // 背景
+            Color.black
+                .edgesIgnoringSafeArea(.all)
+                .zIndex(999)
+                .onTapGesture {
+                    isPresented = false
+                }
+            
+            // 内容
+            VStack(spacing: 20) {
+                // 关闭按钮
+                HStack {
+                    Button(action: {
+                        print("关闭按钮被点击")
+                        isPresented = false
+                    }) {
+                        Text("关闭")
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .background(Color.blue)
+                            .cornerRadius(20)
+                    }
+                    .padding(.top, 50)
+                    
+                    Spacer()
+                }
+                .padding(.horizontal)
+                
+                Spacer()
+                
+                if let image = uiImage {
+                    Text("图片尺寸: \(Int(image.size.width)) x \(Int(image.size.height))")
+                        .foregroundColor(.white)
+                        .padding()
+                    
+                    // 图片
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding()
+                        .background(Color.gray.opacity(0.2))
+                        .cornerRadius(12)
+                } else {
+                    Text("正在加载图片...")
+                        .font(.title)
+                        .foregroundColor(.white)
+                        .padding()
+                        .onAppear {
+                            print("图片视图出现但尚未加载图片")
+                        }
+                }
+                
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .zIndex(1000)
+        }
+        .transition(.opacity)
+        .onAppear {
+            print("SimpleImageViewer已显示")
+            // 确保在显示时加载图片
+            if uiImage == nil {
+                loadImage()
+            }
+        }
+    }
+    
+    private func loadImage() {
+        if let image = UIImage(data: imageData) {
+            print("成功加载图片，尺寸：\(image.size.width) x \(image.size.height)")
+            self.uiImage = image
+        } else {
+            print("无法从数据创建图片，数据大小：\(imageData.count)")
+        }
     }
 }
 
@@ -261,6 +355,8 @@ struct MessageView: View {
     let message: ChatMessage
     @State private var imageScale: CGFloat = 1.0
     @State private var viewId = UUID() // 添加唯一ID用于强制刷新
+    @State private var isImageViewerPresented = false
+    @State private var selectedImageData: Data? = nil  // 使用Data而不是UIImage
     
     // 检查是否为欢迎消息
     private var isWelcomeMessage: Bool {
@@ -324,20 +420,33 @@ struct MessageView: View {
                         }
                     
                 case .image(let image):
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 300, maxHeight: 300)
-                        .cornerRadius(10)
-                        .scaleEffect(imageScale)
-                        .gesture(MagnificationGesture()
-                            .onChanged { value in
-                                self.imageScale = value
+                    Button(action: {
+                        if let imageData = image.jpegData(compressionQuality: 1.0) ?? image.pngData() {
+                            print("准备显示图片，数据大小：\(imageData.count)字节")
+                            self.selectedImageData = imageData
+                            DispatchQueue.main.async {
+                                self.isImageViewerPresented = true
+                                print("已设置isImageViewerPresented=true")
                             }
-                            .onEnded { _ in
-                                self.imageScale = 1.0
-                            }
-                        )
+                        } else {
+                            print("无法获取图片数据")
+                        }
+                    }) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 300, maxHeight: 300)
+                            .cornerRadius(10)
+                            .overlay(
+                                Text("点击查看大图")
+                                    .foregroundColor(.white)
+                                    .padding(6)
+                                    .background(Color.black.opacity(0.6))
+                                    .cornerRadius(5)
+                                    .padding(10),
+                                alignment: .bottom
+                            )
+                    }
                     
                 case .mixedContent(let items):
                     VStack(alignment: .leading, spacing: 0) {
@@ -370,11 +479,33 @@ struct MessageView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                 
                             case .image(let image, _):
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(maxWidth: 300, maxHeight: 300)
-                                    .cornerRadius(10)
+                                Button(action: {
+                                    if let imageData = image.jpegData(compressionQuality: 1.0) ?? image.pngData() {
+                                        print("准备显示混合内容图片，数据大小：\(imageData.count)字节")
+                                        self.selectedImageData = imageData
+                                        DispatchQueue.main.async {
+                                            self.isImageViewerPresented = true
+                                            print("已设置混合内容isImageViewerPresented=true")
+                                        }
+                                    } else {
+                                        print("无法获取混合内容图片数据")
+                                    }
+                                }) {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(maxWidth: 300, maxHeight: 300)
+                                        .cornerRadius(10)
+                                        .overlay(
+                                            Text("点击查看大图")
+                                                .foregroundColor(.white)
+                                                .padding(6)
+                                                .background(Color.black.opacity(0.6))
+                                                .cornerRadius(5)
+                                                .padding(10),
+                                            alignment: .bottom
+                                        )
+                                }
                             }
                         }
                     }
@@ -400,32 +531,26 @@ struct MessageView: View {
                 viewId = UUID()
             }
             .id(viewId) // 使用viewId强制刷新
-            .onAppear {
-                // 打印调试信息
-                switch message.content {
-                case .text(let text):
-                    print("显示文本消息: \(text.prefix(30))...")
-                case .markdown(let mdText):
-                    print("显示Markdown消息: \(mdText.prefix(30))...")
-                case .mixedContent(let items):
-                    print("显示混合内容消息，项目数: \(items.count)")
-                    for (index, item) in items.enumerated() {
-                        switch item {
-                        case .text(let text, _):
-                            print("  项目 \(index): 文本类型，内容: \(text.prefix(30))...")
-                        case .markdown(let mdText, _):
-                            print("  项目 \(index): Markdown类型，内容: \(mdText.prefix(30))...")
-                        case .image:
-                            print("  项目 \(index): 图像类型")
-                        }
-                    }
-                case .image:
-                    print("显示图像消息")
-                }
-            }
             
             if message.role == .assistant {
                 Spacer()
+            }
+        }
+        .fullScreenCover(isPresented: $isImageViewerPresented, onDismiss: {
+            print("图片查看器已关闭")
+            selectedImageData = nil
+        }) {
+            if let imageData = selectedImageData {
+                SimpleImageViewer(imageData: imageData, isPresented: $isImageViewerPresented)
+            } else {
+                Text("无图片数据")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black)
+                    .foregroundColor(.white)
+                    .edgesIgnoringSafeArea(.all)
+                    .onTapGesture {
+                        isImageViewerPresented = false
+                    }
             }
         }
     }
