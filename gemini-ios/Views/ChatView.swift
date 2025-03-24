@@ -85,7 +85,6 @@ extension Theme {
 
 struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
-    @State private var showingExamples = false
     @State private var imagePickerVisible = false
     @State private var selectedImage: UIImage?
     @State private var photoItem: PhotosPickerItem?
@@ -229,30 +228,6 @@ struct ChatView: View {
                 }
             }
             .padding()
-            
-            // 示例按钮
-            Button("查看示例提示") {
-                showingExamples = true
-            }
-            .padding(.bottom)
-            .actionSheet(isPresented: $showingExamples) {
-                ActionSheet(
-                    title: Text("选择示例提示"),
-                    message: Text("选择一个示例来尝试Gemini的能力"),
-                    buttons: [
-                        .default(Text("图像生成")) {
-                            viewModel.useExamplePrompt(type: .imageEdit)
-                        },
-                        .default(Text("故事生成")) {
-                            viewModel.useExamplePrompt(type: .storyGeneration)
-                        },
-                        .default(Text("设计生成")) {
-                            viewModel.useExamplePrompt(type: .designGeneration)
-                        },
-                        .cancel()
-                    ]
-                )
-            }
         }
     }
 }
