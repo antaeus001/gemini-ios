@@ -318,7 +318,7 @@ struct MessageView: View {
             if let image = enlargedImage {
                 ZStack {
                     // 背景遮罩
-                    Color.black.opacity(0.9)
+                    Color(.systemBackground)
                         .edgesIgnoringSafeArea(.all)
                     
                     // 图片和控制按钮
@@ -330,9 +330,9 @@ struct MessageView: View {
                             } label: {
                                 Image(systemName: "xmark")
                                     .font(.title3)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(.primary)
                                     .padding(12)
-                                    .background(Circle().fill(Color.black.opacity(0.7)))
+                                    .background(Circle().fill(Color(.systemGray6)))
                             }
                             .padding(.leading, 20)
                             
@@ -643,6 +643,7 @@ class ImageSaver: NSObject {
 struct ImageViewer: View {
     let image: UIImage
     let onClose: () -> Void
+    @Environment(\.colorScheme) var colorScheme
     
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
@@ -722,10 +723,10 @@ struct ImageViewer: View {
                             Text("保存")
                                 .font(.subheadline)
                         }
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
-                        .background(Capsule().fill(Color.black.opacity(0.6)))
+                        .background(Capsule().fill(Color(.systemGray6)))
                     }
                     .padding(.leading, 20)
                     
@@ -737,9 +738,9 @@ struct ImageViewer: View {
                     } label: {
                         Image(systemName: "square.and.arrow.up")
                             .font(.title)
-                            .foregroundColor(.white)
+                            .foregroundColor(.primary)
                             .padding(12)
-                            .background(Circle().fill(Color.black.opacity(0.6)))
+                            .background(Circle().fill(Color(.systemGray6)))
                     }
                     .padding(.trailing, 20)
                 }
