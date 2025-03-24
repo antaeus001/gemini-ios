@@ -475,6 +475,14 @@ class ChatViewModel: ObservableObject {
             await sendMessage()
         }
     }
+    
+    // 清除所有消息，开始新会话
+    func clearMessages() {
+        self.messages = []
+        self.currentlyGeneratingMessage = nil
+        self.error = nil
+        print("已清除所有消息，准备开始新会话")
+    }
 }
 
 // 示例提示类型

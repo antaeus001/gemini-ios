@@ -157,6 +157,7 @@ struct ToolExampleDetailView: View {
     @State private var prompt: String
     @EnvironmentObject var chatViewModel: ChatViewModel
     @State private var shouldNavigateToChat = false
+    @State private var showingConfirmation = false
     
     init(example: ToolExample, isPresented: Binding<Bool>) {
         self.example = example
@@ -224,14 +225,10 @@ struct ToolExampleDetailView: View {
                     Spacer()
                     
                     Button(action: {
-                        // 使用这个提示词
-                        chatViewModel.inputMessage = prompt
-                        isPresented = false
-                        
-                        // 通知需要切换到聊天标签
-                        NotificationCenter.default.post(name: NSNotification.Name("SwitchToChat"), object: nil)
+                        // 显示确认对话框
+                        showingConfirmation = true
                     }) {
-                        Text("使用此提示")
+                        Text("开始新会话")
                             .fontWeight(.semibold)
                             .padding(.horizontal, 20)
                             .padding(.vertical, 10)
@@ -249,6 +246,22 @@ struct ToolExampleDetailView: View {
                 Image(systemName: "xmark.circle.fill")
                     .foregroundColor(.gray)
             })
+            .alert(isPresented: $showingConfirmation) {
+                Alert(
+                    title: Text("开始新会话"),
+                    message: Text("这将清除当前会话中的所有消息。确定要开始新会话吗？"),
+                    primaryButton: .default(Text("确定")) {
+                        // 确认后创建新会话
+                        chatViewModel.inputMessage = prompt
+                        chatViewModel.clearMessages()
+                        isPresented = false
+                        
+                        // 通知需要切换到聊天标签
+                        NotificationCenter.default.post(name: NSNotification.Name("SwitchToChat"), object: nil)
+                    },
+                    secondaryButton: .cancel(Text("取消"))
+                )
+            }
         }
     }
 }
