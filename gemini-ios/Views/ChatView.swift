@@ -277,42 +277,37 @@ struct MessageView: View {
                     Color.black.opacity(0.9)
                         .edgesIgnoringSafeArea(.all)
                     
-                    // 图片
-                    VStack {
-                        // 关闭按钮
+                    // 图片和控制按钮
+                    VStack(spacing: 0) {
+                        // 顶部工具栏
                         HStack {
                             Button {
                                 enlargedImage = nil
                             } label: {
-                                Text("关闭")
+                                Image(systemName: "xmark")
+                                    .font(.title3)
                                     .foregroundColor(.white)
-                                    .padding(8)
-                                    .background(Color.blue)
-                                    .cornerRadius(8)
+                                    .padding(12)
+                                    .background(Circle().fill(Color.black.opacity(0.7)))
                             }
-                            .padding()
+                            .padding(.leading, 20)
                             
                             Spacer()
                         }
+                        .padding(.top, 50)
+                        .padding(.bottom, 20)
                         
+                        // 图片显示 - 占满中间区域
                         Spacer()
-                        
-                        // 图片显示
-                        Image(uiImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .padding()
-                            .onTapGesture {
-                                // 点击图片也可以关闭
-                                enlargedImage = nil
-                            }
-                        
+                        ImageViewer(image: image, onClose: {
+                            enlargedImage = nil
+                        })
                         Spacer()
                     }
                 }
                 .zIndex(999) // 确保在最上层
                 .transition(.opacity)
+                .edgesIgnoringSafeArea(.all)
             }
         }
     }
@@ -478,6 +473,245 @@ struct TypingIndicator: View {
             withAnimation(Animation.linear(duration: 1.5).repeatForever(autoreverses: false)) {
                 animationOffset = 2 * .pi
             }
+        }
+    }
+}
+
+// 图片保存工具类 - 处理保存回调
+class ImageSaver: NSObject {
+    var completion: (Bool, Error?) -> Void
+    
+    init(completion: @escaping (Bool, Error?) -> Void) {
+        self.completion = completion
+        super.init()
+    }
+    
+    // 图片保存回调
+    @objc func image(_ image: UIImage, didFinishSavingWithError error: Error?, contextInfo: UnsafeRawPointer) {
+        if let error = error {
+            completion(false, error)
+        } else {
+            completion(true, nil)
+        }
+    }
+    
+    // 保存图片到相册
+    func saveToPhotos(image: UIImage) {
+        UIImageWriteToSavedPhotosAlbum(image, self, #selector(self.image(_:didFinishSavingWithError:contextInfo:)), nil)
+    }
+}
+
+// 带手势支持的图片查看器组件
+struct ImageViewer: View {
+    let image: UIImage
+    let onClose: () -> Void
+    
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+    @State private var showSaveAlert = false
+    @State private var saveAlertMessage = ""
+    
+    var body: some View {
+        ZStack {
+            // 图片区域
+            Image(uiImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .scaleEffect(scale)
+                .offset(offset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .gesture(
+                    MagnificationGesture()
+                        .onChanged { value in
+                            let delta = value / lastScale
+                            lastScale = value
+                            // 限制缩放范围
+                            let newScale = scale * delta
+                            scale = min(max(newScale, 0.5), 5.0)
+                        }
+                        .onEnded { _ in
+                            lastScale = 1.0
+                        }
+                )
+                .gesture(
+                    DragGesture()
+                        .onChanged { value in
+                            let newOffset = CGSize(
+                                width: lastOffset.width + value.translation.width,
+                                height: lastOffset.height + value.translation.height
+                            )
+                            offset = newOffset
+                        }
+                        .onEnded { _ in
+                            lastOffset = offset
+                        }
+                )
+                .gesture(
+                    TapGesture(count: 2)
+                        .onEnded {
+                            withAnimation {
+                                if scale > 1.5 {
+                                    // 如果放大了，双击恢复原始大小
+                                    scale = 1.0
+                                    offset = .zero
+                                    lastOffset = .zero
+                                } else {
+                                    // 如果是原始大小，双击放大到2倍
+                                    scale = 2.0
+                                }
+                            }
+                        }
+                )
+                .onTapGesture {
+                    // 单击关闭（仅当未放大时）
+                    if scale <= 1.1 {
+                        onClose()
+                    }
+                }
+            
+            // 工具按钮浮层
+            VStack {
+                HStack {
+                    // 直接保存到相册按钮
+                    Button {
+                        saveImageDirectlyToPhotos()
+                    } label: {
+                        HStack {
+                            Image(systemName: "photo")
+                                .font(.title3)
+                            Text("保存")
+                                .font(.subheadline)
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Color.black.opacity(0.6)))
+                    }
+                    .padding(.leading, 20)
+                    
+                    Spacer()
+                    
+                    // 分享按钮
+                    Button {
+                        saveImageToPhotos()
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.title)
+                            .foregroundColor(.white)
+                            .padding(12)
+                            .background(Circle().fill(Color.black.opacity(0.6)))
+                    }
+                    .padding(.trailing, 20)
+                }
+                
+                Spacer()
+            }
+            .padding(.top, 20)
+        }
+        .onAppear {
+            print("图片查看器已显示，尺寸: \(image.size.width) x \(image.size.height)")
+        }
+        .alert(isPresented: $showSaveAlert) {
+            Alert(title: Text("提示"), message: Text(saveAlertMessage), dismissButton: .default(Text("确定")))
+        }
+    }
+    
+    // 直接保存到相册
+    private func saveImageDirectlyToPhotos() {
+        PHPhotoLibrary.requestAuthorization { status in
+            DispatchQueue.main.async {
+                switch status {
+                case .authorized, .limited:
+                    // 使用辅助类保存图片
+                    let imageSaver = ImageSaver { success, error in
+                        DispatchQueue.main.async {
+                            if success {
+                                print("图片已成功保存到相册")
+                                self.saveAlertMessage = "图片已保存到相册"
+                            } else {
+                                print("保存图片错误: \(error?.localizedDescription ?? "未知错误")")
+                                self.saveAlertMessage = "保存图片失败: \(error?.localizedDescription ?? "未知错误")"
+                            }
+                            self.showSaveAlert = true
+                        }
+                    }
+                    imageSaver.saveToPhotos(image: self.image)
+                    
+                case .denied, .restricted:
+                    self.saveAlertMessage = "无法保存图片，请在设置中允许应用访问您的相册"
+                    self.showSaveAlert = true
+                case .notDetermined:
+                    self.saveAlertMessage = "请先授权访问相册"
+                    self.showSaveAlert = true
+                @unknown default:
+                    self.saveAlertMessage = "未知错误，无法保存图片"
+                    self.showSaveAlert = true
+                }
+            }
+        }
+    }
+    
+    // 使用分享菜单保存图片
+    private func saveImageToPhotos() {
+        // 先尝试使用ActivityViewController分享
+        let imageToShare = image
+        
+        // 创建一个临时图片文件URL
+        let imageName = "Gemini_Image_\(Date().timeIntervalSince1970).jpeg"
+        let fileManager = FileManager.default
+        let tempDirectoryURL = fileManager.temporaryDirectory
+        let imageFileURL = tempDirectoryURL.appendingPathComponent(imageName)
+        
+        do {
+            // 将图片保存为JPEG文件
+            if let jpegData = imageToShare.jpegData(compressionQuality: 0.9) {
+                try jpegData.write(to: imageFileURL)
+                
+                // 创建活动视图控制器
+                let activityItems: [Any] = [imageFileURL]
+                let activityVC = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+                
+                // 在iPad上设置弹出框的来源视图
+                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                   let rootViewController = windowScene.windows.first?.rootViewController {
+                    activityVC.popoverPresentationController?.sourceView = rootViewController.view
+                    activityVC.popoverPresentationController?.sourceRect = CGRect(x: UIScreen.main.bounds.width / 2, y: UIScreen.main.bounds.height / 2, width: 0, height: 0)
+                    activityVC.popoverPresentationController?.permittedArrowDirections = []
+                    
+                    // 显示分享表单
+                    rootViewController.present(activityVC, animated: true, completion: nil)
+                    
+                    // 处理完成回调（可选）
+                    activityVC.completionWithItemsHandler = { activityType, completed, returnedItems, error in
+                        // 删除临时文件
+                        do {
+                            try fileManager.removeItem(at: imageFileURL)
+                        } catch {
+                            print("无法删除临时文件: \(error.localizedDescription)")
+                        }
+                        
+                        // 显示结果
+                        DispatchQueue.main.async {
+                            if let error = error {
+                                self.saveAlertMessage = "图片分享失败: \(error.localizedDescription)"
+                                self.showSaveAlert = true
+                            } else if completed {
+                                self.saveAlertMessage = "操作已完成"
+                                self.showSaveAlert = true
+                            }
+                        }
+                    }
+                }
+            } else {
+                self.saveAlertMessage = "无法创建图片数据"
+                self.showSaveAlert = true
+            }
+        } catch {
+            print("保存图片错误: \(error.localizedDescription)")
+            self.saveAlertMessage = "保存图片失败: \(error.localizedDescription)"
+            self.showSaveAlert = true
         }
     }
 }
