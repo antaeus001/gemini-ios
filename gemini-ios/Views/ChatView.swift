@@ -89,6 +89,7 @@ struct ChatView: View {
     @State private var selectedImage: UIImage?
     @State private var photoItem: PhotosPickerItem?
     @State private var messageCounter: Int = 0
+    @FocusState private var isInputFocused: Bool
     
     // 修复MainActor初始化问题
     init(viewModel: ChatViewModel? = nil) {
@@ -113,11 +114,11 @@ struct ChatView: View {
     @State private var scrollViewProxy: ScrollViewProxy?
     
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
             // 显示聊天记录
             ScrollViewReader { scrollView in
                 ScrollView {
-                    LazyVStack(spacing: 12) {
+                    LazyVStack(spacing: 16) {
                         ForEach(viewModel.messages) { message in
                             MessageView(message: message)
                                 .id(message.id)
@@ -127,14 +128,15 @@ struct ChatView: View {
                                         self.messageCounter += 1
                                     }
                                 }
+                                .transition(.opacity)
                         }
+                        .padding(.horizontal)
                     }
-                    .padding(.horizontal)
+                    .padding(.vertical, 10)
                     .id(messageCounter) // 使用计数器强制刷新
+                    .animation(.easeOut(duration: 0.2), value: viewModel.messages.count)
                 }
                 .background(Color(.systemBackground))
-                .shadow(radius: 5)
-                .padding()
                 .onChange(of: viewModel.messages.count) { _, _ in
                     scrollToBottom()
                 }
@@ -147,6 +149,8 @@ struct ChatView: View {
                 }
             }
             
+            Divider()
+            
             // 如果有选择的图片，显示预览和提示
             if let userImage = viewModel.userImage {
                 HStack {
@@ -155,6 +159,7 @@ struct ChatView: View {
                         .scaledToFit()
                         .frame(height: 60)
                         .cornerRadius(8)
+                        .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
                     
                     Text("请输入提示词来编辑此图片")
                         .font(.caption)
@@ -170,22 +175,32 @@ struct ChatView: View {
                     }
                 }
                 .padding(.horizontal)
+                .padding(.vertical, 8)
+                .background(Color(.systemBackground))
             }
             
             // 显示错误信息（如果有）
             if let error = viewModel.error {
                 Text(error)
-                    .foregroundColor(.red)
+                    .font(.callout)
+                    .foregroundColor(.white)
                     .padding()
+                    .background(Color.red.opacity(0.8))
+                    .cornerRadius(8)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
             }
             
             // 输入区域
-            HStack {
+            HStack(alignment: .bottom, spacing: 10) {
                 // 图片选择按钮
                 PhotosPicker(selection: $photoItem, matching: .images) {
                     Image(systemName: "photo")
-                        .font(.system(size: 20))
+                        .font(.system(size: 22))
                         .foregroundColor(.blue)
+                        .frame(width: 40, height: 40)
+                        .background(Color.blue.opacity(0.1))
+                        .clipShape(Circle())
                 }
                 .disabled(viewModel.isLoading)
                 .onChange(of: photoItem) { _, newItem in
@@ -203,32 +218,55 @@ struct ChatView: View {
                 }
                 
                 // 消息输入框
-                TextField("想要生成什么？", text: $viewModel.inputMessage)
-                    .padding(10)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(20)
-                    .disabled(viewModel.isLoading)
+                ZStack(alignment: .leading) {
+                    if viewModel.inputMessage.isEmpty {
+                        Text("想要生成什么？")
+                            .foregroundColor(.gray.opacity(0.8))
+                            .padding(.leading, 8)
+                            .padding(.top, 8)
+                    }
+                    
+                    TextEditor(text: $viewModel.inputMessage)
+                        .padding(4)
+                        .focused($isInputFocused)
+                        .frame(minHeight: 40, maxHeight: 120)
+                        .background(Color.clear)
+                        .scrollContentBackground(.hidden)
+                        .disabled(viewModel.isLoading)
+                }
+                .padding(8)
+                .background(Color(.systemGray6))
+                .cornerRadius(20)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(isInputFocused ? Color.blue.opacity(0.5) : Color.clear, lineWidth: 1.5)
+                )
                 
                 // 加载指示器或发送按钮
                 if viewModel.isLoading {
                     ProgressView()
-                        .padding(.horizontal, 10)
+                        .frame(width: 40, height: 40)
                 } else {
                     Button(action: {
+                        isInputFocused = false
                         Task {
                             await viewModel.sendMessage()
                         }
                     }) {
                         Image(systemName: "arrow.up.circle.fill")
                             .resizable()
-                            .frame(width: 30, height: 30)
-                            .foregroundColor(.blue)
+                            .frame(width: 40, height: 40)
+                            .foregroundColor(viewModel.inputMessage.isEmpty && viewModel.userImage == nil ? .gray : .blue)
                     }
                     .disabled(viewModel.inputMessage.isEmpty && viewModel.userImage == nil)
                 }
             }
-            .padding()
+            .padding(.horizontal)
+            .padding(.vertical, 10)
+            .background(Color(.systemBackground))
+            .animation(.easeOut(duration: 0.2), value: viewModel.isLoading)
         }
+        .background(Color(.secondarySystemBackground))
     }
 }
 
@@ -237,6 +275,7 @@ struct MessageView: View {
     let message: ChatMessage
     @State private var viewId = UUID()
     @State private var enlargedImage: UIImage? = nil
+    @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
         ZStack {
@@ -287,147 +326,244 @@ struct MessageView: View {
         }
     }
     
+    // 用户头像颜色
+    private var userAvatarColor: Color {
+        Color.blue
+    }
+    
+    // AI头像颜色
+    private var aiAvatarColor: Color {
+        Color.purple
+    }
+    
+    // 用户气泡背景色
+    private var userBubbleColor: Color {
+        colorScheme == .dark ? Color.blue.opacity(0.3) : Color.blue.opacity(0.2)
+    }
+    
+    // AI气泡背景色
+    private var aiBubbleColor: Color {
+        colorScheme == .dark ? Color.gray.opacity(0.3) : Color.gray.opacity(0.15)
+    }
+    
     // 正常消息内容视图
     private var messageContent: some View {
-        HStack {
-            if message.role == .user {
-                Spacer()
-            }
-            
-            VStack(alignment: message.role == .user ? .trailing : .leading) {
-                // 依据消息角色决定头像显示
-                if message.role != .user {
-                    HStack {
+        HStack(alignment: .top, spacing: 8) {
+            // AI消息左侧显示头像
+            if message.role == .assistant {
+                Circle()
+                    .fill(aiAvatarColor)
+                    .frame(width: 36, height: 36)
+                    .overlay(
                         Image(systemName: "brain")
                             .font(.system(size: 16))
                             .foregroundColor(.white)
-                            .padding(8)
-                            .background(Circle().fill(Color.purple))
-                        
-                        Text("Gemini")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        
-                        Spacer()
-                    }
-                    .padding(.bottom, 4)
+                    )
+                    .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+            } else {
+                Spacer()
+            }
+            
+            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
+                // 消息头部
+                if message.role == .assistant {
+                    Text("Gemini")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                        .padding(.leading, 4)
                 }
                 
-                switch message.content {
-                case .text(let text):
-                    Text(text)
-                        .padding(10)
-                        .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
-                        .cornerRadius(10)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                    
-                case .markdown(let markdownText):
-                    Markdown(markdownText)
-                        .textSelection(.enabled)
-                        .markdownTheme(Theme.custom)
-                        .padding(10)
-                        .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
-                        .cornerRadius(10)
-                        .fixedSize(horizontal: false, vertical: true)
-                    
-                case .image(let image):
-                    Button(action: {
-                        print("直接显示图片: \(image.size.width) x \(image.size.height)")
-                        self.enlargedImage = image
-                    }) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: 300, maxHeight: 300)
-                            .cornerRadius(10)
-                            .overlay(
-                                Text("点击查看大图")
-                                    .font(.caption)
-                                    .padding(4)
-                                    .background(Color.black.opacity(0.7))
-                                    .foregroundColor(.white)
-                                    .cornerRadius(4)
-                                    .padding(8),
-                                alignment: .bottom
-                            )
-                    }
-                    
-                case .mixedContent(let items):
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(items) { item in
-                            switch item {
-                            case .text(let text, _):
-                                if text.contains("**") || text.contains("*") || 
-                                   text.contains("#") || text.contains("```") || 
-                                   text.contains("•") || text.contains("- ") || 
-                                   text.contains("* ") {
-                                    Markdown(text)
-                                        .textSelection(.enabled)
-                                        .markdownTheme(Theme.custom)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                        .padding(4)
-                                } else {
-                                    Text(text)
-                                        .textSelection(.enabled)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                
-                            case .markdown(let markdownText, _):
-                                Markdown(markdownText)
-                                    .textSelection(.enabled)
-                                    .markdownTheme(Theme.custom)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                
-                            case .image(let image, _):
-                                Button(action: {
-                                    print("直接显示混合内容图片: \(image.size.width) x \(image.size.height)")
-                                    self.enlargedImage = image
-                                }) {
-                                    Image(uiImage: image)
-                                        .resizable()
-                                        .scaledToFit()
-                                        .frame(maxWidth: 300, maxHeight: 300)
-                                        .cornerRadius(10)
-                                        .overlay(
-                                            Text("点击查看大图")
-                                                .font(.caption)
-                                                .padding(4)
-                                                .background(Color.black.opacity(0.7))
-                                                .foregroundColor(.white)
-                                                .cornerRadius(4)
-                                                .padding(8),
-                                            alignment: .bottom
-                                        )
-                                }
-                            }
-                        }
-                    }
-                    .padding(10)
-                    .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
-                    .cornerRadius(10)
-                }
+                // 消息内容
+                messageBubble
                 
+                // 生成中指示器
                 if message.isGenerating {
                     HStack {
-                        Text("正在生成...")
-                            .font(.caption)
+                        Text("正在生成")
+                            .font(.caption2)
                             .foregroundColor(.gray)
                         TypingIndicator()
                     }
-                    .padding(.top, 4)
+                    .padding(.top, 2)
+                    .padding(.leading, 4)
                 }
             }
-            .frame(maxWidth: UIScreen.main.bounds.width * 0.8, alignment: message.role == .user ? .trailing : .leading)
-            .onChange(of: message.content) { _, _ in
-                viewId = UUID()
-            }
-            .id(viewId)
             
-            if message.role == .assistant {
+            // 用户消息右侧显示头像
+            if message.role == .user {
+                Circle()
+                    .fill(userAvatarColor)
+                    .frame(width: 36, height: 36)
+                    .overlay(
+                        Image(systemName: "person.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(.white)
+                    )
+                    .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+            } else {
                 Spacer()
             }
         }
+        .padding(.vertical, 2)
+        .onChange(of: message.content) { _, _ in
+            viewId = UUID()
+        }
+        .id(viewId)
+    }
+    
+    // 消息气泡
+    private var messageBubble: some View {
+        Group {
+            switch message.content {
+            case .text(let text):
+                Text(text)
+                    .padding(12)
+                    .background(message.role == .user ? userBubbleColor : aiBubbleColor)
+                    .clipShape(BubbleShape(isFromCurrentUser: message.role == .user))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                
+            case .markdown(let markdownText):
+                Markdown(markdownText)
+                    .textSelection(.enabled)
+                    .markdownTheme(Theme.custom)
+                    .padding(12)
+                    .background(message.role == .user ? userBubbleColor : aiBubbleColor)
+                    .clipShape(BubbleShape(isFromCurrentUser: message.role == .user))
+                    .fixedSize(horizontal: false, vertical: true)
+                
+            case .image(let image):
+                Button(action: {
+                    enlargedImage = image
+                }) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 250, maxHeight: 250)
+                        .cornerRadius(12)
+                        .overlay(
+                            Text("点击查看")
+                                .font(.caption)
+                                .padding(4)
+                                .background(Color.black.opacity(0.6))
+                                .foregroundColor(.white)
+                                .cornerRadius(4)
+                                .padding(8),
+                            alignment: .bottom
+                        )
+                }
+                .padding(4)
+                .background(message.role == .user ? userBubbleColor : aiBubbleColor)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                
+            case .mixedContent(let items):
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(items) { item in
+                        switch item {
+                        case .text(let text, _):
+                            if text.contains("**") || text.contains("*") || 
+                               text.contains("#") || text.contains("```") || 
+                               text.contains("•") || text.contains("- ") || 
+                               text.contains("* ") {
+                                Markdown(text)
+                                    .textSelection(.enabled)
+                                    .markdownTheme(Theme.custom)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.vertical, 2)
+                            } else {
+                                Text(text)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.vertical, 2)
+                            }
+                            
+                        case .markdown(let markdownText, _):
+                            Markdown(markdownText)
+                                .textSelection(.enabled)
+                                .markdownTheme(Theme.custom)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.vertical, 2)
+                            
+                        case .image(let image, _):
+                            Button(action: {
+                                enlargedImage = image
+                            }) {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(maxWidth: 250, maxHeight: 250)
+                                    .cornerRadius(8)
+                                    .overlay(
+                                        Text("点击查看")
+                                            .font(.caption)
+                                            .padding(4)
+                                            .background(Color.black.opacity(0.6))
+                                            .foregroundColor(.white)
+                                            .cornerRadius(4)
+                                            .padding(8),
+                                        alignment: .bottom
+                                    )
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                }
+                .padding(12)
+                .background(message.role == .user ? userBubbleColor : aiBubbleColor)
+                .clipShape(BubbleShape(isFromCurrentUser: message.role == .user))
+            }
+        }
+        .shadow(color: Color.black.opacity(0.03), radius: 2, x: 0, y: 1)
+    }
+}
+
+// 气泡形状
+struct BubbleShape: Shape {
+    let isFromCurrentUser: Bool
+    
+    func path(in rect: CGRect) -> Path {
+        let cornerRadius: CGFloat = 16
+        let triangleSize: CGFloat = 8
+        
+        var path = Path()
+        
+        if isFromCurrentUser {
+            // 右边的三角形气泡
+            path.move(to: CGPoint(x: rect.maxX - triangleSize, y: rect.minY + cornerRadius + triangleSize))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cornerRadius))
+            path.addLine(to: CGPoint(x: rect.maxX - triangleSize, y: rect.minY + cornerRadius))
+            
+            // 其余的圆角矩形
+            path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.minY))
+            path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.minY + cornerRadius),
+                        radius: cornerRadius, startAngle: Angle(degrees: -90), endAngle: Angle(degrees: 180), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - cornerRadius))
+            path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY - cornerRadius),
+                        radius: cornerRadius, startAngle: Angle(degrees: 180), endAngle: Angle(degrees: 90), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY))
+            path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY - cornerRadius),
+                        radius: cornerRadius, startAngle: Angle(degrees: 90), endAngle: Angle(degrees: 0), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cornerRadius + triangleSize))
+        } else {
+            // 左边的三角形气泡
+            path.move(to: CGPoint(x: rect.minX + triangleSize, y: rect.minY + cornerRadius + triangleSize))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius))
+            path.addLine(to: CGPoint(x: rect.minX + triangleSize, y: rect.minY + cornerRadius))
+            
+            // 其余的圆角矩形
+            path.addLine(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY))
+            path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY + cornerRadius),
+                        radius: cornerRadius, startAngle: Angle(degrees: -90), endAngle: Angle(degrees: 0), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cornerRadius))
+            path.addArc(center: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY - cornerRadius),
+                        radius: cornerRadius, startAngle: Angle(degrees: 0), endAngle: Angle(degrees: 90), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY))
+            path.addArc(center: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY - cornerRadius),
+                        radius: cornerRadius, startAngle: Angle(degrees: 90), endAngle: Angle(degrees: 180), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius + triangleSize))
+        }
+        
+        return path
     }
 }
 
@@ -436,14 +572,17 @@ struct TypingIndicator: View {
     @State private var animationOffset = 0.0
     
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             ForEach(0..<3) { index in
                 Circle()
-                    .frame(width: 6, height: 6)
+                    .fill(Color.gray.opacity(0.6))
+                    .frame(width: 5, height: 5)
                     .offset(y: sin(animationOffset + Double(index) * 0.5) * 2)
+                    .opacity(0.5 + sin(animationOffset + Double(index) * 0.5) * 0.5)
             }
         }
-        .foregroundColor(.gray)
+        .padding(.vertical, 2)
+        .padding(.horizontal, 4)
         .onAppear {
             withAnimation(Animation.linear(duration: 1.5).repeatForever(autoreverses: false)) {
                 animationOffset = 2 * .pi
