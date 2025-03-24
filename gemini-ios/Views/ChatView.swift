@@ -338,12 +338,12 @@ struct MessageView: View {
     
     // 用户气泡背景色
     private var userBubbleColor: Color {
-        colorScheme == .dark ? Color.blue.opacity(0.3) : Color.blue.opacity(0.2)
+        colorScheme == .dark ? Color.blue.opacity(0.8) : Color.blue.opacity(0.2)
     }
     
     // AI气泡背景色
     private var aiBubbleColor: Color {
-        colorScheme == .dark ? Color.gray.opacity(0.3) : Color.gray.opacity(0.15)
+        colorScheme == .dark ? Color.gray.opacity(0.8) : Color.gray.opacity(0.2)
     }
     
     // 正常消息内容视图
@@ -369,7 +369,7 @@ struct MessageView: View {
                 if message.role == .assistant {
                     Text("Gemini")
                         .font(.caption)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondary)
                         .padding(.leading, 4)
                 }
                 
@@ -381,13 +381,14 @@ struct MessageView: View {
                     HStack {
                         Text("正在生成")
                             .font(.caption2)
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondary)
                         TypingIndicator()
                     }
                     .padding(.top, 2)
                     .padding(.leading, 4)
                 }
             }
+            .frame(maxWidth: UIScreen.main.bounds.width * 0.75, alignment: message.role == .user ? .trailing : .leading)
             
             // 用户消息右侧显示头像
             if message.role == .user {
@@ -417,9 +418,8 @@ struct MessageView: View {
             switch message.content {
             case .text(let text):
                 Text(text)
+                    .foregroundColor(colorScheme == .dark ? .white : .black)
                     .padding(12)
-                    .background(message.role == .user ? userBubbleColor : aiBubbleColor)
-                    .clipShape(BubbleShape(isFromCurrentUser: message.role == .user))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 
@@ -428,8 +428,6 @@ struct MessageView: View {
                     .textSelection(.enabled)
                     .markdownTheme(Theme.custom)
                     .padding(12)
-                    .background(message.role == .user ? userBubbleColor : aiBubbleColor)
-                    .clipShape(BubbleShape(isFromCurrentUser: message.role == .user))
                     .fixedSize(horizontal: false, vertical: true)
                 
             case .image(let image):
@@ -453,8 +451,6 @@ struct MessageView: View {
                         )
                 }
                 .padding(4)
-                .background(message.role == .user ? userBubbleColor : aiBubbleColor)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
                 
             case .mixedContent(let items):
                 VStack(alignment: .leading, spacing: 8) {
@@ -472,6 +468,7 @@ struct MessageView: View {
                                     .padding(.vertical, 2)
                             } else {
                                 Text(text)
+                                    .foregroundColor(colorScheme == .dark ? .white : .black)
                                     .textSelection(.enabled)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .padding(.vertical, 2)
@@ -509,11 +506,8 @@ struct MessageView: View {
                     }
                 }
                 .padding(12)
-                .background(message.role == .user ? userBubbleColor : aiBubbleColor)
-                .clipShape(BubbleShape(isFromCurrentUser: message.role == .user))
             }
         }
-        .shadow(color: Color.black.opacity(0.03), radius: 2, x: 0, y: 1)
     }
 }
 
