@@ -717,5 +717,7 @@ struct ImageViewer: View {
 }
 
 #Preview {
-    ChatView()
+    NavigationView {
+        ChatView()
+    }
 }
