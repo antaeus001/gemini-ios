@@ -222,17 +222,19 @@ struct ChatView: View {
                     if viewModel.inputMessage.isEmpty {
                         Text("想要生成什么？")
                             .foregroundColor(.gray.opacity(0.8))
-                            .padding(.leading, 8)
-                            .padding(.top, 8)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 10)
                     }
                     
                     TextEditor(text: $viewModel.inputMessage)
-                        .padding(4)
-                        .focused($isInputFocused)
-                        .frame(minHeight: 40, maxHeight: 120)
+                        .font(.system(size: 17))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 8)
+                        .frame(height: textEditorHeight())
                         .background(Color.clear)
                         .scrollContentBackground(.hidden)
                         .disabled(viewModel.isLoading)
+                        .lineSpacing(2) // 设置行间距
                 }
                 .padding(8)
                 .background(Color(.systemGray6))
@@ -267,6 +269,34 @@ struct ChatView: View {
             .animation(.easeOut(duration: 0.2), value: viewModel.isLoading)
         }
         .background(Color(.secondarySystemBackground))
+    }
+    
+    // 计算输入框高度
+    private func textEditorHeight() -> CGFloat {
+        let text = viewModel.inputMessage
+        let width = UIScreen.main.bounds.width - 120 // 减去左右边距和其他控件的宽度
+        
+        let font = UIFont.systemFont(ofSize: 17) // 使用标准字体大小
+        let lineHeight: CGFloat = font.lineHeight // 获取字体的行高
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 2 // 设置行间距
+        
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .paragraphStyle: paragraphStyle
+        ]
+        
+        let constraintRect = CGSize(width: width, height: .greatestFiniteMagnitude)
+        let boundingBox = text.boundingRect(
+            with: constraintRect,
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes,
+            context: nil
+        )
+        
+        let height = ceil(boundingBox.height)
+        let minHeight: CGFloat = lineHeight + 24 // 单行文本高度 + 上下内边距
+        return max(minHeight, min(height + 24, 120)) // 基础高度为单行高度，最大120，上下各加12点内边距
     }
 }
 
