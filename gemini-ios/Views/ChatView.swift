@@ -90,6 +90,7 @@ struct ChatView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var messageCounter: Int = 0
     @FocusState private var isInputFocused: Bool
+    @State private var isScrolledToBottom = true // 新增：跟踪是否已滚动到底部
     
     // 修复MainActor初始化问题
     init(viewModel: ChatViewModel? = nil) {
@@ -104,9 +105,11 @@ struct ChatView: View {
     }
     
     func scrollToBottom() {
-        if let lastMessage = viewModel.messages.last {
-            withAnimation {
-                scrollViewProxy?.scrollTo(lastMessage.id, anchor: .bottom)
+        if isScrolledToBottom, let lastMessage = viewModel.messages.last {
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.1)) {
+                    scrollViewProxy?.scrollTo(lastMessage.id, anchor: .bottom)
+                }
             }
         }
     }
@@ -123,9 +126,9 @@ struct ChatView: View {
                             MessageView(message: message)
                                 .id(message.id)
                                 .onChange(of: message.content) { _, _ in
-                                    DispatchQueue.main.async {
-                                        // 强制刷新整个UI
-                                        self.messageCounter += 1
+                                    // 内容变化时不再直接增加计数器，而是判断是否为最后一条消息
+                                    if message.id == viewModel.messages.last?.id {
+                                        scrollToBottom()
                                     }
                                 }
                                 .transition(.opacity)
@@ -133,19 +136,36 @@ struct ChatView: View {
                         .padding(.horizontal)
                     }
                     .padding(.vertical, 10)
-                    .id(messageCounter) // 使用计数器强制刷新
+                    // 移除使用计数器作为ID，避免整个ScrollView重建
                     .animation(.easeOut(duration: 0.2), value: viewModel.messages.count)
                 }
                 .background(Color(.systemBackground))
                 .onChange(of: viewModel.messages.count) { _, _ in
+                    // 仅在消息数量变化时滚动到底部（新消息发送时）
+                    isScrolledToBottom = true // 重置滚动状态
                     scrollToBottom()
                 }
-                .onChange(of: messageCounter) { _, _ in
-                    scrollToBottom()
+                // 使用滚动位置检测器跟踪是否已滚动到底部
+                .overlay(
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: ScrollViewOffsetPreferenceKey.self,
+                            value: geo.frame(in: .named("scrollView")).maxY
+                        )
+                    }
+                )
+                .coordinateSpace(name: "scrollView")
+                .onPreferenceChange(ScrollViewOffsetPreferenceKey.self) { maxY in
+                    // 获取ScrollView的内容高度和可见区域高度
+                    // 如果用户手动滚动到接近底部，我们认为用户希望保持在底部
+                    let scrollViewHeight = UIScreen.main.bounds.height
+                    isScrolledToBottom = maxY <= scrollViewHeight + 50 // 允许50点的误差
                 }
                 .onAppear {
                     scrollViewProxy = scrollView
-                    scrollToBottom()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        scrollToBottom()
+                    }
                 }
             }
             
@@ -839,6 +859,14 @@ class ImageSaver: NSObject {
     // 保存图片到相册
     func saveToPhotos(image: UIImage) {
         UIImageWriteToSavedPhotosAlbum(image, self, #selector(self.image(_:didFinishSavingWithError:contextInfo:)), nil)
+    }
+}
+
+// 定义滚动位置偏好键
+struct ScrollViewOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
