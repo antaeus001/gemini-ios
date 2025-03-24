@@ -579,7 +579,7 @@ struct ImageViewerSheet: View {
                             }
                     )
                 
-                // 顶部工具栏
+                // 关闭按钮 - 左上角
                 VStack {
                     HStack {
                         Button {
@@ -591,7 +591,20 @@ struct ImageViewerSheet: View {
                                 .padding(12)
                                 .background(Circle().fill(Color(.systemGray6)))
                         }
+                        .padding(.leading, 20)
                         
+                        Spacer()
+                    }
+                    .padding(.top, geometry.safeAreaInsets.top + 10)
+                    
+                    Spacer()
+                }
+                
+                // 保存和分享按钮 - 右下角
+                VStack {
+                    Spacer()
+                    
+                    HStack {
                         Spacer()
                         
                         // 分享按钮
@@ -622,9 +635,7 @@ struct ImageViewerSheet: View {
                         }
                     }
                     .padding(.horizontal, 20)
-                    .padding(.top, geometry.safeAreaInsets.top + 10)
-                    
-                    Spacer()
+                    .padding(.bottom, geometry.safeAreaInsets.bottom + 10)
                 }
             }
         }
