@@ -83,99 +83,6 @@ extension Theme {
     }
 }
 
-// 图片查看器 - 超简单实现
-struct SimpleImageViewer: View {
-    let imageData: Data  // 使用Data而不是UIImage
-    @Binding var isPresented: Bool
-    @State private var uiImage: UIImage?
-    
-    init(imageData: Data, isPresented: Binding<Bool>) {
-        self.imageData = imageData
-        self._isPresented = isPresented
-        print("初始化SimpleImageViewer，数据大小：\(imageData.count)字节")
-    }
-    
-    var body: some View {
-        ZStack {
-            // 背景
-            Color.black
-                .edgesIgnoringSafeArea(.all)
-                .zIndex(999)
-                .onTapGesture {
-                    isPresented = false
-                }
-            
-            // 内容
-            VStack(spacing: 20) {
-                // 关闭按钮
-                HStack {
-                    Button(action: {
-                        print("关闭按钮被点击")
-                        isPresented = false
-                    }) {
-                        Text("关闭")
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 10)
-                            .background(Color.blue)
-                            .cornerRadius(20)
-                    }
-                    .padding(.top, 50)
-                    
-                    Spacer()
-                }
-                .padding(.horizontal)
-                
-                Spacer()
-                
-                if let image = uiImage {
-                    Text("图片尺寸: \(Int(image.size.width)) x \(Int(image.size.height))")
-                        .foregroundColor(.white)
-                        .padding()
-                    
-                    // 图片
-                    Image(uiImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding()
-                        .background(Color.gray.opacity(0.2))
-                        .cornerRadius(12)
-                } else {
-                    Text("正在加载图片...")
-                        .font(.title)
-                        .foregroundColor(.white)
-                        .padding()
-                        .onAppear {
-                            print("图片视图出现但尚未加载图片")
-                        }
-                }
-                
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .zIndex(1000)
-        }
-        .transition(.opacity)
-        .onAppear {
-            print("SimpleImageViewer已显示")
-            // 确保在显示时加载图片
-            if uiImage == nil {
-                loadImage()
-            }
-        }
-    }
-    
-    private func loadImage() {
-        if let image = UIImage(data: imageData) {
-            print("成功加载图片，尺寸：\(image.size.width) x \(image.size.height)")
-            self.uiImage = image
-        } else {
-            print("无法从数据创建图片，数据大小：\(imageData.count)")
-        }
-    }
-}
-
 struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
     @State private var showingExamples = false
@@ -353,22 +260,65 @@ struct ChatView: View {
 // 消息视图
 struct MessageView: View {
     let message: ChatMessage
-    @State private var imageScale: CGFloat = 1.0
-    @State private var viewId = UUID() // 添加唯一ID用于强制刷新
-    @State private var isImageViewerPresented = false
-    @State private var selectedImageData: Data? = nil  // 使用Data而不是UIImage
-    
-    // 检查是否为欢迎消息
-    private var isWelcomeMessage: Bool {
-        if message.role == .assistant,
-           case .markdown(let content) = message.content,
-           content.contains("请您上传您想要调整的图片") {
-            return true
-        }
-        return false
-    }
+    @State private var viewId = UUID()
+    @State private var enlargedImage: UIImage? = nil
     
     var body: some View {
+        ZStack {
+            // 正常的消息内容
+            if enlargedImage == nil {
+                messageContent
+            }
+            
+            // 放大的图片覆盖层
+            if let image = enlargedImage {
+                ZStack {
+                    // 背景遮罩
+                    Color.black.opacity(0.9)
+                        .edgesIgnoringSafeArea(.all)
+                    
+                    // 图片
+                    VStack {
+                        // 关闭按钮
+                        HStack {
+                            Button {
+                                enlargedImage = nil
+                            } label: {
+                                Text("关闭")
+                                    .foregroundColor(.white)
+                                    .padding(8)
+                                    .background(Color.blue)
+                                    .cornerRadius(8)
+                            }
+                            .padding()
+                            
+                            Spacer()
+                        }
+                        
+                        Spacer()
+                        
+                        // 图片显示
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding()
+                            .onTapGesture {
+                                // 点击图片也可以关闭
+                                enlargedImage = nil
+                            }
+                        
+                        Spacer()
+                    }
+                }
+                .zIndex(999) // 确保在最上层
+                .transition(.opacity)
+            }
+        }
+    }
+    
+    // 正常消息内容视图
+    private var messageContent: some View {
         HStack {
             if message.role == .user {
                 Spacer()
@@ -395,7 +345,6 @@ struct MessageView: View {
                 
                 switch message.content {
                 case .text(let text):
-                    // 移除换行相关的判断，直接统一使用Text渲染
                     Text(text)
                         .padding(10)
                         .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
@@ -404,7 +353,6 @@ struct MessageView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     
                 case .markdown(let markdownText):
-                    // 直接使用Markdown组件渲染，确保保留所有格式
                     Markdown(markdownText)
                         .textSelection(.enabled)
                         .markdownTheme(Theme.custom)
@@ -412,25 +360,11 @@ struct MessageView: View {
                         .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2))
                         .cornerRadius(10)
                         .fixedSize(horizontal: false, vertical: true)
-                        .onAppear {
-                            print("渲染Markdown内容，长度: \(markdownText.count), 前缀: \(markdownText.prefix(50))")
-                            // 打印所有换行符位置
-                            let newlineIndexes = markdownText.indices.filter { markdownText[$0] == "\n" }
-                            print("换行符位置: \(newlineIndexes.count)个")
-                        }
                     
                 case .image(let image):
                     Button(action: {
-                        if let imageData = image.jpegData(compressionQuality: 1.0) ?? image.pngData() {
-                            print("准备显示图片，数据大小：\(imageData.count)字节")
-                            self.selectedImageData = imageData
-                            DispatchQueue.main.async {
-                                self.isImageViewerPresented = true
-                                print("已设置isImageViewerPresented=true")
-                            }
-                        } else {
-                            print("无法获取图片数据")
-                        }
+                        print("直接显示图片: \(image.size.width) x \(image.size.height)")
+                        self.enlargedImage = image
                     }) {
                         Image(uiImage: image)
                             .resizable()
@@ -439,11 +373,12 @@ struct MessageView: View {
                             .cornerRadius(10)
                             .overlay(
                                 Text("点击查看大图")
+                                    .font(.caption)
+                                    .padding(4)
+                                    .background(Color.black.opacity(0.7))
                                     .foregroundColor(.white)
-                                    .padding(6)
-                                    .background(Color.black.opacity(0.6))
-                                    .cornerRadius(5)
-                                    .padding(10),
+                                    .cornerRadius(4)
+                                    .padding(8),
                                 alignment: .bottom
                             )
                     }
@@ -453,26 +388,22 @@ struct MessageView: View {
                         ForEach(items) { item in
                             switch item {
                             case .text(let text, _):
-                                // 检测text内容是否包含markdown格式
                                 if text.contains("**") || text.contains("*") || 
                                    text.contains("#") || text.contains("```") || 
                                    text.contains("•") || text.contains("- ") || 
                                    text.contains("* ") {
-                                    // 如果包含markdown标记，使用Markdown渲染
                                     Markdown(text)
                                         .textSelection(.enabled)
                                         .markdownTheme(Theme.custom)
                                         .fixedSize(horizontal: false, vertical: true)
                                         .padding(4)
                                 } else {
-                                    // 否则使用普通Text渲染
                                     Text(text)
                                         .textSelection(.enabled)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                                 
                             case .markdown(let markdownText, _):
-                                // Markdown内容，始终使用Markdown组件渲染
                                 Markdown(markdownText)
                                     .textSelection(.enabled)
                                     .markdownTheme(Theme.custom)
@@ -480,16 +411,8 @@ struct MessageView: View {
                                 
                             case .image(let image, _):
                                 Button(action: {
-                                    if let imageData = image.jpegData(compressionQuality: 1.0) ?? image.pngData() {
-                                        print("准备显示混合内容图片，数据大小：\(imageData.count)字节")
-                                        self.selectedImageData = imageData
-                                        DispatchQueue.main.async {
-                                            self.isImageViewerPresented = true
-                                            print("已设置混合内容isImageViewerPresented=true")
-                                        }
-                                    } else {
-                                        print("无法获取混合内容图片数据")
-                                    }
+                                    print("直接显示混合内容图片: \(image.size.width) x \(image.size.height)")
+                                    self.enlargedImage = image
                                 }) {
                                     Image(uiImage: image)
                                         .resizable()
@@ -498,11 +421,12 @@ struct MessageView: View {
                                         .cornerRadius(10)
                                         .overlay(
                                             Text("点击查看大图")
+                                                .font(.caption)
+                                                .padding(4)
+                                                .background(Color.black.opacity(0.7))
                                                 .foregroundColor(.white)
-                                                .padding(6)
-                                                .background(Color.black.opacity(0.6))
-                                                .cornerRadius(5)
-                                                .padding(10),
+                                                .cornerRadius(4)
+                                                .padding(8),
                                             alignment: .bottom
                                         )
                                 }
@@ -514,7 +438,6 @@ struct MessageView: View {
                     .cornerRadius(10)
                 }
                 
-                // 如果消息处于生成中状态，显示指示器
                 if message.isGenerating {
                     HStack {
                         Text("正在生成...")
@@ -527,30 +450,12 @@ struct MessageView: View {
             }
             .frame(maxWidth: UIScreen.main.bounds.width * 0.8, alignment: message.role == .user ? .trailing : .leading)
             .onChange(of: message.content) { _, _ in
-                // 当内容变化时强制更新视图
                 viewId = UUID()
             }
-            .id(viewId) // 使用viewId强制刷新
+            .id(viewId)
             
             if message.role == .assistant {
                 Spacer()
-            }
-        }
-        .fullScreenCover(isPresented: $isImageViewerPresented, onDismiss: {
-            print("图片查看器已关闭")
-            selectedImageData = nil
-        }) {
-            if let imageData = selectedImageData {
-                SimpleImageViewer(imageData: imageData, isPresented: $isImageViewerPresented)
-            } else {
-                Text("无图片数据")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black)
-                    .foregroundColor(.white)
-                    .edgesIgnoringSafeArea(.all)
-                    .onTapGesture {
-                        isImageViewerPresented = false
-                    }
             }
         }
     }
