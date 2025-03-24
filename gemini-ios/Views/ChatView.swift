@@ -91,6 +91,7 @@ struct ChatView: View {
     @State private var messageCounter: Int = 0
     @FocusState private var isInputFocused: Bool
     @State private var isScrolledToBottom = true // 新增：跟踪是否已滚动到底部
+    @State private var lastScrollTime: TimeInterval = 0
     
     // 修复MainActor初始化问题
     init(viewModel: ChatViewModel? = nil) {
@@ -106,9 +107,13 @@ struct ChatView: View {
     
     func scrollToBottom() {
         if isScrolledToBottom, let lastMessage = viewModel.messages.last {
-            DispatchQueue.main.async {
-                withAnimation(.easeOut(duration: 0.1)) {
+            // 降低滚动频率，使用防抖技术
+            let now = Date().timeIntervalSince1970
+            if now - lastScrollTime > 0.3 { // 300ms防抖
+                DispatchQueue.main.async {
+                    // 移除动画，减少渲染负担
                     scrollViewProxy?.scrollTo(lastMessage.id, anchor: .bottom)
+                    lastScrollTime = now
                 }
             }
         }
@@ -126,8 +131,8 @@ struct ChatView: View {
                             MessageView(message: message)
                                 .id(message.id)
                                 .onChange(of: message.content) { _, _ in
-                                    // 内容变化时不再直接增加计数器，而是判断是否为最后一条消息
-                                    if message.id == viewModel.messages.last?.id {
+                                    // 只在最后一条消息内容变化时滚动
+                                    if message.id == viewModel.messages.last?.id && message.isGenerating {
                                         scrollToBottom()
                                     }
                                 }
@@ -419,10 +424,6 @@ struct MessageView: View {
             }
         }
         .padding(.vertical, 2)
-        .onChange(of: message.content) { _, _ in
-            viewId = UUID()
-        }
-        .id(viewId)
     }
     
     // 消息气泡
@@ -437,9 +438,9 @@ struct MessageView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 
             case .markdown(let markdownText):
-                Markdown(markdownText)
+                // 使用简单的缓存策略减少渲染次数
+                CachedMarkdownView(content: markdownText)
                     .textSelection(.enabled)
-                    .markdownTheme(Theme.custom)
                     .padding(12)
                     .fixedSize(horizontal: false, vertical: true)
                 
@@ -867,6 +868,40 @@ struct ScrollViewOffsetPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+// 添加一个缓存Markdown内容的视图结构
+struct CachedMarkdownView: View {
+    let content: String
+    @State private var renderTask: Task<Void, Never>? = nil
+    @State private var renderedContent: String = ""
+    
+    var body: some View {
+        Group {
+            if content.count > 1000 && content != renderedContent {
+                // 对于长内容，先显示普通文本，异步渲染Markdown
+                Text(content)
+                    .textSelection(.enabled)
+                    .onAppear {
+                        // 取消上一个任务
+                        renderTask?.cancel()
+                        // 创建新任务
+                        renderTask = Task {
+                            // 添加延迟，避免频繁渲染
+                            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
+                            if !Task.isCancelled {
+                                await MainActor.run {
+                                    renderedContent = content
+                                }
+                            }
+                        }
+                    }
+            } else {
+                Markdown(content)
+                    .markdownTheme(Theme.custom)
+            }
+        }
     }
 }
 
