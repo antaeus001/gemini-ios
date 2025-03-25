@@ -44,7 +44,7 @@ class GeminiService {
     static let shared = GeminiService()
     
     // API配置
-    private let baseUrlString = "https://generativelanguage.googleapis.com/v1beta/models"
+    private let baseUrlString = "https://huohuaai.com/v1/gemini/image-generation"
     private let modelName = "gemini-2.0-flash-exp-image-generation"
     private let geminiApiKey = "AIzaSyDtaceYdTFwn4H0RIA6u5fHS-BDUJoEK04"
     
@@ -305,7 +305,8 @@ class GeminiService {
         print("请求提示: \(prompt)")
         
         // 创建URL
-        let urlString = "\(baseUrlString)/\(modelName):streamGenerateContent?key=\(geminiApiKey)&alt=sse"
+        //let urlString = "\(baseUrlString)/\(modelName):streamGenerateContent?key=\(geminiApiKey)&alt=sse"
+        let urlString = "\(baseUrlString)"
         guard let url = URL(string: urlString) else {
             throw NSError(domain: "GeminiService", code: 1, userInfo: [NSLocalizedDescriptionKey: "无效的URL"])
         }
@@ -314,6 +315,7 @@ class GeminiService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue("Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbnRhZXVzMDAxIiwiaWF0IjoxNzM1NjI0NDAzLCJleHAiOjE3NDQyNjQ0MDN9.ZrV6qOhbk1Ct4J8o3gvLcoeycQz_yItasitVfS5sR50", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 180
         
         // 构建用户消息
