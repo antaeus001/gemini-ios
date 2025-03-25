@@ -158,9 +158,22 @@ class GeminiService {
     private func processResponseData(_ responseDict: [String: Any], modelParts: inout [[String: Any]]) async {
         print("收到响应数据: \(responseDict)")
         
-        guard let candidates = responseDict["candidates"] as? [[String: Any]],
-              candidates.count > 0,
-              let content = candidates[0]["content"] as? [String: Any],
+        // 支持驼峰命名的字段
+        var candidates: [[String: Any]]? = nil
+        
+        // 检查候选项字段（支持驼峰命名和下划线命名）
+        if let candidatesData = responseDict["candidates"] as? [[String: Any]] {
+            candidates = candidatesData
+        }
+        
+        guard let candidates = candidates,
+              candidates.count > 0 else {
+            print("响应中未找到候选项: \(responseDict)")
+            return
+        }
+        
+        // 检查内容字段（支持驼峰命名）
+        guard let content = candidates[0]["content"] as? [String: Any],
               let parts = content["parts"] as? [[String: Any]] else {
             print("不完整或无效的响应: \(responseDict)")
             return
@@ -277,7 +290,25 @@ class GeminiService {
                 
                 printResponseContent("图像内容: MimeType=\(mimeType), 数据长度=\(data.count)字节", type: "图像")
                 
-                if let imageData = Data(base64Encoded: data) {
+                // 检查数据是否为URL
+                if data.hasPrefix("http") {
+                    // 是URL路径，确保使用https
+                    var imageUrl = data
+                    if data.hasPrefix("http:") {
+                        imageUrl = "https:" + data.dropFirst(5)
+                    }
+                    
+                    print("图像URL: \(imageUrl)")
+                    
+                    // 创建Markdown格式的图片内容
+                    let markdownImage = "![生成的图像](\(imageUrl))"
+                    let contentItem = ContentItem(type: .markdown(markdownImage), timestamp: Date())
+                    currentContentItems.append(contentItem)
+                    await MainActor.run {
+                        self.currentUpdateHandler?(contentItem)
+                    }
+                } else if let imageData = Data(base64Encoded: data) {
+                    // 兼容旧格式：base64编码的图像数据
                     print("成功解码图像数据，大小: \(imageData.count)字节")
                     let contentItem = ContentItem(type: .image(imageData), timestamp: Date())
                     currentContentItems.append(contentItem)
@@ -285,7 +316,7 @@ class GeminiService {
                         self.currentUpdateHandler?(contentItem)
                     }
                 } else {
-                    print("无法解码Base64图像数据")
+                    print("无法解码图像数据: 既不是有效URL也不是Base64数据")
                 }
             }
         }
@@ -518,7 +549,8 @@ class GeminiService {
         print("请求提示: \(prompt)")
         
         // 创建URL
-        let urlString = "\(baseUrlString)/\(modelName):streamGenerateContent?key=\(geminiApiKey)&alt=sse"
+        //let urlString = "\(baseUrlString)/\(modelName):streamGenerateContent?key=\(geminiApiKey)&alt=sse"
+        let urlString = "\(baseUrlString)"
         guard let url = URL(string: urlString) else {
             throw NSError(domain: "GeminiService", code: 1, userInfo: [NSLocalizedDescriptionKey: "无效的URL"])
         }
@@ -527,6 +559,7 @@ class GeminiService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue("Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbnRhZXVzMDAxIiwiaWF0IjoxNzM1NjI0NDAzLCJleHAiOjE3NDQyNjQ0MDN9.ZrV6qOhbk1Ct4J8o3gvLcoeycQz_yItasitVfS5sR50", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 180
         
         // 将图片转换为base64
