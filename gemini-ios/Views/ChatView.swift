@@ -3,6 +3,7 @@ import UIKit
 import PhotosUI
 import MarkdownUI
 import Photos
+import NetworkImage
 
 // 测试Markdown渲染视图
 struct MarkdownTestView: View {
@@ -483,7 +484,10 @@ struct MessageView: View {
                 
             case .markdown(let markdownText):
                 // 使用延迟加载来降低Markdown渲染的频率
-                LazyMarkdownView(markdownText: markdownText)
+                LazyMarkdownView(markdownText: markdownText,
+                                 imageAction: { image in
+                    enlargedImage = image
+                })
                     .padding(12)
                     .fixedSize(horizontal: false, vertical: true)
                 
@@ -519,7 +523,10 @@ struct MessageView: View {
                                text.contains("•") || text.contains("- ") || 
                                text.contains("* ") {
                                 // 使用延迟加载来降低Markdown渲染的频率
-                                LazyMarkdownView(markdownText: text)
+                                LazyMarkdownView(markdownText: text,
+                                                 imageAction: { image in
+                                    enlargedImage = image
+                                })
                                     .fixedSize(horizontal: false, vertical: true)
                                     .padding(.vertical, 2)
                             } else {
@@ -532,7 +539,10 @@ struct MessageView: View {
                             
                         case .markdown(let markdownText, _):
                             // 使用延迟加载来降低Markdown渲染的频率
-                            LazyMarkdownView(markdownText: markdownText)
+                            LazyMarkdownView(markdownText: markdownText,
+                                             imageAction: { image in
+                                enlargedImage = image
+                            })
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(.vertical, 2)
                             
@@ -571,12 +581,15 @@ struct LazyMarkdownView: View {
     let markdownText: String
     @State private var shouldRender: Bool = false
     
+    let imageAction: (UIImage) -> Void
+    
     var body: some View {
         Group {
             if shouldRender {
                 Markdown(markdownText)
                     .textSelection(.enabled)
                     .markdownTheme(Theme.custom)
+                    .markdownImageProvider(NetworkImageProvider(action: imageAction))
             } else {
                 Text(markdownText)
                     .textSelection(.enabled)
@@ -588,6 +601,71 @@ struct LazyMarkdownView: View {
                     }
             }
         }
+    }
+}
+
+struct NetworkImageView: View {
+    let url: URL?
+    let action: (UIImage) -> Void
+    
+    @State private var image: UIImage?
+    @State private var loading: Bool = true
+    
+    var body: some View {
+        if loading {
+            ProgressView("图片加载中...")
+                .onAppear {
+                    guard let url = url else {
+                        loading = false
+                        return
+                    }
+                    URLSession.shared.dataTask(with: url) { data, _, error in
+                        if let data = data, let image = UIImage(data: data) {
+                            DispatchQueue.main.async {
+                                self.image = image
+                                self.loading = false
+                            }
+                        } else {
+                            DispatchQueue.main.async {
+                                self.loading = false
+                            }
+                        }
+                    }.resume()
+                }
+        } else {
+            if let image = image {
+                Button(action: {
+                    action(image)
+                }) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 250, maxHeight: 250)
+                        .cornerRadius(8)
+                        .overlay(
+                            Text("点击查看")
+                                .font(.caption)
+                                .padding(4)
+                                .background(Color.black.opacity(0.6))
+                                .foregroundColor(.white)
+                                .cornerRadius(4)
+                                .padding(8),
+                            alignment: .bottom
+                        )
+                }
+                .padding(.vertical, 4)
+            } else {
+                Text("图片加载失败")
+            }
+        }
+    }
+}
+
+struct NetworkImageProvider: ImageProvider {
+    let action: (UIImage) -> Void
+    
+    func makeImage(url: URL?) -> some View {
+        NetworkImageView(url: url, action: action)
     }
 }
 

@@ -31,12 +31,15 @@ public enum MixedContentItem: Identifiable, Equatable {
         switch (lhs, rhs) {
         case (.text(let lhsText, _), .text(let rhsText, _)):
             return lhsText == rhsText
-        case (.image(let lhsImage, _), .image(let rhsImage, _)):
-            // 由于UIImage没有原生实现Equatable，我们可以比较它们的pngData
-            if let lhsData = lhsImage.pngData(), let rhsData = rhsImage.pngData() {
-                return lhsData == rhsData
-            }
-            return false
+        case (.image(_, let lhsUUID), .image(_, let rhsUUID)):
+            return lhsUUID == rhsUUID
+//        case (.image(let lhsImage, _), .image(let rhsImage, _)):
+//            // 由于UIImage没有原生实现Equatable，我们可以比较它们的pngData
+//            // 这里pngData()是个耗时操作，会导致卡顿
+//            if let lhsData = lhsImage.pngData(), let rhsData = rhsImage.pngData() {
+//                return lhsData == rhsData
+//            }
+//            return false
         case (.markdown(let lhsText, _), .markdown(let rhsText, _)):
             return lhsText == rhsText
         default:
