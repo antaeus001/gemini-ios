@@ -11,8 +11,8 @@ class ChatViewModel: ObservableObject {
     @Published var userImage: UIImage? = nil
     
     var currentlyGeneratingMessage: ChatMessage? = nil
-    private let geminiService = GeminiService.shared
-    private var chatListId: String // 保存当前聊天列表ID
+    let geminiService = GeminiService.shared
+    var chatListId: String // 保存当前聊天列表ID
     
     // 初始化方法
     init() {
@@ -173,9 +173,6 @@ class ChatViewModel: ObservableObject {
         error = nil
         
         do {
-            // 重置GeminiService的对话历史
-            geminiService.clearChatHistory()
-            
             // 使用URL发送请求
             try await geminiService.generateContentWithImageUrl(prompt: prompt, imageUrl: imageUrl) { [weak self] contentItem in
                 guard let self = self else { return }
@@ -255,9 +252,6 @@ class ChatViewModel: ObservableObject {
                 
                 print("已获取图片URL: \(imageUrl)，使用URL发送请求")
                 
-                // 重置GeminiService的对话历史
-                geminiService.clearChatHistory()
-                
                 // 使用URL发送请求
                 try await geminiService.generateContentWithImageUrl(prompt: prompt, imageUrl: imageUrl) { [weak self] contentItem in
                     guard let self = self else { return }
@@ -272,9 +266,6 @@ class ChatViewModel: ObservableObject {
                 }
             } else {
                 // 使用base64方式（不推荐使用此方式）
-                // 重置GeminiService的对话历史
-                geminiService.clearChatHistory()
-                
                 try await geminiService.generateContentWithImage(prompt: prompt, image: image, useImageUpload: false) { [weak self] contentItem in
                     guard let self = self else { return }
                     
@@ -351,7 +342,7 @@ class ChatViewModel: ObservableObject {
         error = nil
         
         do {
-            // 重置GeminiService的对话历史
+            // 重置GeminiService的对话历史（因为这是开始新的对话）
             geminiService.clearChatHistory()
             
             // 使用流式API

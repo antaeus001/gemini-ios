@@ -235,6 +235,8 @@ struct ChatView: View {
                             if let data = try? await newItem.loadTransferable(type: Data.self),
                                let image = UIImage(data: data) {
                                 await MainActor.run {
+                                    // 确保设置当前聊天列表ID
+                                    viewModel.geminiService.setChatList(id: viewModel.chatListId)
                                     viewModel.setUserImage(image)
                                     photoItem = nil
                                 }
