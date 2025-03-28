@@ -36,7 +36,13 @@ enum ChatMessageContent {
 struct GeminiChatMessage {
     let role: String
     let parts: [[String: Any]]
-    var contentItems: [ContentItem]
+    let contentItems: [ContentItem]?
+    
+    init(role: String, parts: [[String: Any]], contentItems: [ContentItem]? = nil) {
+        self.role = role
+        self.parts = parts
+        self.contentItems = contentItems
+    }
 }
 
 class GeminiService {
@@ -58,6 +64,8 @@ class GeminiService {
     
     // 状态变量
     var chatHistory: [GeminiChatMessage] = []
+    var currentChatListId: String? = nil // 当前聊天列表的ID
+    var chatLists: [String: [GeminiChatMessage]] = [:] // 所有聊天列表
     var currentContentItems: [ContentItem] = []
     var isStreamActive: Bool = false
     var currentUpdateHandler: ContentUpdateHandler? = nil
@@ -65,9 +73,45 @@ class GeminiService {
     private var completeStreamLog: String = ""
     private var streamStartTime: Date = Date()
     
+    // 设置当前聊天列表
+    func setChatList(id: String) {
+        currentChatListId = id
+        if chatLists[id] == nil {
+            chatLists[id] = []
+        }
+        // 将当前聊天列表的消息加载到chatHistory
+        chatHistory = chatLists[id] ?? []
+        print("切换到聊天列表: \(id), 消息数量: \(chatHistory.count)")
+    }
+    
+    // 清除当前聊天列表
+    func clearCurrentChatList() {
+        if let id = currentChatListId {
+            chatLists[id] = []
+            chatHistory = []
+            currentContentItems = []
+            print("已清空当前聊天列表: \(id)")
+        } else {
+            print("警告: 没有设置当前聊天列表ID")
+        }
+    }
+    
     // 清除聊天历史
     func clearChatHistory() {
         chatHistory.removeAll()
+        if let id = currentChatListId {
+            chatLists[id] = []
+        }
+        currentContentItems.removeAll()
+    }
+    
+    // 开始新的会话
+    func startNewSession() {
+        print("开始新会话，清空之前的聊天历史")
+        chatHistory.removeAll()
+        if let id = currentChatListId {
+            chatLists[id] = []
+        }
         currentContentItems.removeAll()
     }
     
@@ -300,12 +344,27 @@ class GeminiService {
                     
                     print("图像URL: \(imageUrl)")
                     
-                    // 创建Markdown格式的图片内容
-                    let markdownImage = "![生成的图像](\(imageUrl))"
-                    let contentItem = ContentItem(type: .markdown(markdownImage), timestamp: Date())
-                    currentContentItems.append(contentItem)
-                    await MainActor.run {
-                        self.currentUpdateHandler?(contentItem)
+                    do {
+                        // 下载图片并转换为Base64
+                        let base64Data = try await downloadImageAndConvertToBase64(from: imageUrl)
+                        
+                        // 创建图片内容项
+                        if let imageData = Data(base64Encoded: base64Data) {
+                            let contentItem = ContentItem(type: .image(imageData), timestamp: Date())
+                            currentContentItems.append(contentItem)
+                            await MainActor.run {
+                                self.currentUpdateHandler?(contentItem)
+                            }
+                        }
+                    } catch {
+                        print("下载或处理图片时出错: \(error.localizedDescription)")
+                        // 如果下载失败，仍然创建Markdown格式的图片内容作为备选
+                        let markdownImage = "![生成的图像](\(imageUrl))"
+                        let contentItem = ContentItem(type: .markdown(markdownImage), timestamp: Date())
+                        currentContentItems.append(contentItem)
+                        await MainActor.run {
+                            self.currentUpdateHandler?(contentItem)
+                        }
                     }
                 } else if let imageData = Data(base64Encoded: data) {
                     // 兼容旧格式：base64编码的图像数据
@@ -319,11 +378,169 @@ class GeminiService {
                     print("无法解码图像数据: 既不是有效URL也不是Base64数据")
                 }
             }
+            // 处理文件数据（来自fileData的图像）
+            else if let fileData = part["fileData"] as? [String: Any],
+                    let fileUri = fileData["fileUri"] as? String,
+                    let mimeType = fileData["mimeType"] as? String,
+                    mimeType.hasPrefix("image/") {
+                
+                printResponseContent("图像文件内容: MimeType=\(mimeType), URI=\(fileUri.prefix(50))...", type: "图像文件")
+                
+                // 处理文件URI（可能是图片URL或data:URL）
+                if fileUri.hasPrefix("data:") {
+                    // 处理内联的data:URL格式
+                    if let base64Data = extractBase64FromDataURL(fileUri),
+                       let imageData = Data(base64Encoded: base64Data) {
+                        print("从data:URL格式成功提取图像数据，大小: \(imageData.count)字节")
+                        let contentItem = ContentItem(type: .image(imageData), timestamp: Date())
+                        currentContentItems.append(contentItem)
+                        await MainActor.run {
+                            self.currentUpdateHandler?(contentItem)
+                        }
+                    } else {
+                        print("无法从data:URL格式提取有效的图像数据")
+                    }
+                } else if fileUri.hasPrefix("${FILE_URI_") {
+                    print("检测到占位符文件URI: \(fileUri)")
+                    
+                    // 为占位符创建一个提示，表明图像将在此处生成
+                    let placeholderText = "【这里将显示生成的图像：\(fileUri)】"
+                    let contentItem = ContentItem(type: .markdown(placeholderText), timestamp: Date())
+                    currentContentItems.append(contentItem)
+                    await MainActor.run {
+                        self.currentUpdateHandler?(contentItem)
+                    }
+                } else if fileUri.hasPrefix("http") {
+                    // 是URL路径，确保使用https
+                    var imageUrl = fileUri
+                    if fileUri.hasPrefix("http:") {
+                        imageUrl = "https:" + fileUri.dropFirst(5)
+                    }
+                    
+                    print("图像文件URL: \(imageUrl)")
+                    
+                    do {
+                        // 下载图片并转换为Base64
+                        let base64Data = try await downloadImageAndConvertToBase64(from: imageUrl)
+                        
+                        // 创建图片内容项
+                        if let imageData = Data(base64Encoded: base64Data) {
+                            let contentItem = ContentItem(type: .image(imageData), timestamp: Date())
+                            currentContentItems.append(contentItem)
+                            await MainActor.run {
+                                self.currentUpdateHandler?(contentItem)
+                            }
+                        }
+                    } catch {
+                        print("下载或处理图片时出错: \(error.localizedDescription)")
+                        // 如果下载失败，仍然创建Markdown格式的图片内容作为备选
+                        let markdownImage = "![生成的图像](\(imageUrl))"
+                        let contentItem = ContentItem(type: .markdown(markdownImage), timestamp: Date())
+                        currentContentItems.append(contentItem)
+                        await MainActor.run {
+                            self.currentUpdateHandler?(contentItem)
+                        }
+                    }
+                } else {
+                    print("无法处理的文件URI格式: \(fileUri)")
+                }
+            }
         }
+    }
+    
+    // 下载图片并转换为Base64
+    private func downloadImageAndConvertToBase64(from urlString: String) async throws -> String {
+        guard let url = URL(string: urlString) else {
+            throw NSError(domain: "GeminiService", code: 1003, userInfo: [NSLocalizedDescriptionKey: "无效的图片URL"])
+        }
+        
+        let (data, _) = try await URLSession.shared.data(from: url)
+        return data.base64EncodedString()
+    }
+    
+    // 从data:URL中提取base64数据
+    private func extractBase64FromDataURL(_ dataURL: String) -> String? {
+        let components = dataURL.components(separatedBy: ",")
+        if components.count >= 2 {
+            return components[1]
+        }
+        return nil
+    }
+    
+    // 合并连续的model消息
+    private func consolidateModelMessages(_ history: [GeminiChatMessage]) -> [GeminiChatMessage] {
+        var consolidatedHistory: [GeminiChatMessage] = []
+        var currentModelParts: [[String: Any]] = []
+        var currentModelContentItems: [ContentItem] = []
+        
+        for (index, message) in history.enumerated() {
+            if message.role == "model" {
+                // 收集model消息的parts
+                currentModelParts.append(contentsOf: message.parts)
+                if let contentItems = message.contentItems {
+                    currentModelContentItems.append(contentsOf: contentItems)
+                }
+                
+                // 如果下一条消息不是model或者这是最后一条消息，合并所有收集的parts
+                if index == history.count - 1 || history[index + 1].role != "model" {
+                    if !currentModelParts.isEmpty {
+                        let consolidatedMessage = GeminiChatMessage(
+                            role: "model",
+                            parts: currentModelParts,
+                            contentItems: currentModelContentItems
+                        )
+                        consolidatedHistory.append(consolidatedMessage)
+                        currentModelParts = []
+                        currentModelContentItems = []
+                    }
+                }
+            } else {
+                // 非model消息直接添加
+                consolidatedHistory.append(message)
+            }
+        }
+        
+        return consolidatedHistory
+    }
+    
+    // 准备请求内容，替换INSERT_INPUT_HERE占位符
+    private func prepareRequestContents(_ history: [GeminiChatMessage], userPrompt: String) -> [[String: Any]] {
+        var contents: [[String: Any]] = []
+        
+        for (index, message) in history.enumerated() {
+            var messageParts = message.parts
+            
+            // 如果是最后一条用户消息，替换INSERT_INPUT_HERE占位符
+            if index == history.count - 1 && message.role == "user" {
+                var newParts: [[String: Any]] = []
+                
+                for part in messageParts {
+                    if let text = part["text"] as? String, text == "INSERT_INPUT_HERE" {
+                        newParts.append(["text": userPrompt])
+                    } else {
+                        newParts.append(part)
+                    }
+                }
+                
+                messageParts = newParts
+            }
+            
+            contents.append([
+                "role": message.role,
+                "parts": messageParts
+            ])
+        }
+        
+        return contents
     }
     
     // 流式生成内容
     func generateContent(prompt: String, updateHandler: @escaping ContentUpdateHandler) async throws {
+        // 确保有当前聊天列表ID
+        guard let chatListId = currentChatListId else {
+            throw NSError(domain: "GeminiService", code: 1004, userInfo: [NSLocalizedDescriptionKey: "未设置当前聊天列表ID"])
+        }
+        
         // 重置状态
         currentContentItems = []
         isStreamActive = true
@@ -334,9 +551,12 @@ class GeminiService {
         
         print("\n=== 开始流式生成内容 ===")
         print("请求提示: \(prompt)")
+        print("当前聊天列表ID: \(chatListId), 历史消息数量: \(chatHistory.count)")
         
         // 创建URL
         //let urlString = "\(baseUrlString)/\(modelName):streamGenerateContent?key=\(geminiApiKey)&alt=sse"
+        
+        // 创建URL
         let urlString = "\(baseUrlString)"
         guard let url = URL(string: urlString) else {
             throw NSError(domain: "GeminiService", code: 1, userInfo: [NSLocalizedDescriptionKey: "无效的URL"])
@@ -347,47 +567,42 @@ class GeminiService {
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         request.addValue("Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbnRhZXVzMDAxIiwiaWF0IjoxNzM1NjI0NDAzLCJleHAiOjE3NDQyNjQ0MDN9.ZrV6qOhbk1Ct4J8o3gvLcoeycQz_yItasitVfS5sR50", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 180
+        request.timeoutInterval = 120
         
-        // 构建用户消息
+        // 创建用户消息
         let userMessage = GeminiChatMessage(
             role: "user",
-            parts: [["text": prompt]],
-            contentItems: [ContentItem(type: .text(prompt), timestamp: Date())]
-        )
-        chatHistory.append(userMessage)
-        
-        // 准备contents数组
-        var contents: [[String: Any]] = []
-        
-        // 添加所有历史消息
-        for message in chatHistory {
-            let messageDict: [String: Any] = [
-                "role": message.role,
-                "parts": message.parts
+            parts: [
+                ["text": prompt]
+            ],
+            contentItems: [
+                ContentItem(type: .text(prompt), timestamp: Date())
             ]
-            contents.append(messageDict)
+        )
+        
+        // 添加到聊天历史
+        chatHistory.append(userMessage)
+        // 同时更新chatLists中的记录
+        if let id = currentChatListId {
+            chatLists[id] = chatHistory
         }
         
+        // 整合连续的model消息
+        let consolidatedHistory = consolidateModelMessages(chatHistory)
+        
+        // 准备请求内容，替换占位符
+        let requestContents = prepareRequestContents(consolidatedHistory, userPrompt: prompt)
+        
         // 构建请求体
-        let requestBody: [String: Any] = [
-            "contents": contents,
+        var requestBody: [String: Any] = [
+            "contents": requestContents,
             "generationConfig": [
-                "temperature": 0.7,
+                "temperature": 1.0,
                 "topK": 40,
                 "topP": 0.95,
                 "maxOutputTokens": 8192,
                 "responseMimeType": "text/plain",
-                "responseModalities": [
-                    "image",
-                    "text"
-                ]
-            ],
-            "safety_settings": [
-                ["category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"],
-                ["category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"],
-                ["category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"],
-                ["category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"]
+                "responseModalities": ["image", "text"]
             ]
         ]
         
@@ -498,6 +713,10 @@ class GeminiService {
                     contentItems: currentContentItems
                 )
                 chatHistory.append(modelMessage)
+                // 同时更新chatLists中的记录
+                if let id = currentChatListId {
+                    chatLists[id] = chatHistory
+                }
                 print("添加模型消息到聊天历史，部分数量: \(modelParts.count), 内容项数量: \(currentContentItems.count)")
             } else {
                 print("没有收集到任何模型部分，无法添加到聊天历史")
@@ -537,6 +756,11 @@ class GeminiService {
     
     // 发送带图片的请求
     func generateContentWithImage(prompt: String, image: UIImage, updateHandler: @escaping ContentUpdateHandler) async throws {
+        // 确保有当前聊天列表ID
+        guard let chatListId = currentChatListId else {
+            throw NSError(domain: "GeminiService", code: 1004, userInfo: [NSLocalizedDescriptionKey: "未设置当前聊天列表ID"])
+        }
+        
         // 重置状态
         currentContentItems = []
         isStreamActive = true
@@ -547,9 +771,12 @@ class GeminiService {
         
         print("\n=== 开始流式生成带图片的内容 ===")
         print("请求提示: \(prompt)")
+        print("当前聊天列表ID: \(chatListId), 历史消息数量: \(chatHistory.count)")
         
         // 创建URL
         //let urlString = "\(baseUrlString)/\(modelName):streamGenerateContent?key=\(geminiApiKey)&alt=sse"
+        
+        // 创建URL
         let urlString = "\(baseUrlString)"
         guard let url = URL(string: urlString) else {
             throw NSError(domain: "GeminiService", code: 1, userInfo: [NSLocalizedDescriptionKey: "无效的URL"])
@@ -575,9 +802,9 @@ class GeminiService {
             parts: [
                 ["text": prompt],
                 [
-                    "inlineData": [
+                    "fileData": [
                         "mimeType": "image/jpeg",
-                        "data": base64Image
+                        "fileUri": "data:image/jpeg;base64," + base64Image
                     ]
                 ]
             ],
@@ -586,39 +813,30 @@ class GeminiService {
                 ContentItem(type: .image(imageData), timestamp: Date())
             ]
         )
+        
+        // 添加到聊天历史
         chatHistory.append(userMessage)
-        
-        // 准备contents数组
-        var contents: [[String: Any]] = []
-        
-        // 添加所有历史消息
-        for message in chatHistory {
-            let messageDict: [String: Any] = [
-                "role": message.role,
-                "parts": message.parts
-            ]
-            contents.append(messageDict)
+        // 同时更新chatLists中的记录
+        if let id = currentChatListId {
+            chatLists[id] = chatHistory
         }
         
+        // 整合连续的model消息
+        let consolidatedHistory = consolidateModelMessages(chatHistory)
+        
+        // 准备请求内容，替换占位符
+        let requestContents = prepareRequestContents(consolidatedHistory, userPrompt: prompt)
+        
         // 构建请求体
-        let requestBody: [String: Any] = [
-            "contents": contents,
+        var requestBody: [String: Any] = [
+            "contents": requestContents,
             "generationConfig": [
-                "temperature": 0.7,
+                "temperature": 1.0,
                 "topK": 40,
                 "topP": 0.95,
                 "maxOutputTokens": 8192,
                 "responseMimeType": "text/plain",
-                "responseModalities": [
-                    "image",
-                    "text"
-                ]
-            ],
-            "safety_settings": [
-                ["category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"],
-                ["category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"],
-                ["category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"],
-                ["category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"]
+                "responseModalities": ["image", "text"]
             ]
         ]
         
@@ -730,6 +948,10 @@ class GeminiService {
                     contentItems: currentContentItems
                 )
                 chatHistory.append(modelMessage)
+                // 同时更新chatLists中的记录
+                if let id = currentChatListId {
+                    chatLists[id] = chatHistory
+                }
                 print("添加模型消息到聊天历史，部分数量: \(modelParts.count), 内容项数量: \(currentContentItems.count)")
             } else {
                 print("没有收集到任何模型部分，无法添加到聊天历史")

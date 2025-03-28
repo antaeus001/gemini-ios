@@ -12,11 +12,30 @@ class ChatViewModel: ObservableObject {
     
     var currentlyGeneratingMessage: ChatMessage? = nil
     private let geminiService = GeminiService.shared
+    private var chatListId: String // 保存当前聊天列表ID
     
     // 初始化方法
     init() {
         print("ChatViewModel初始化 - 使用简化的文本合并逻辑")
+        // 生成一个唯一的聊天列表ID
+        self.chatListId = UUID().uuidString
+        // 设置当前聊天列表ID
+        geminiService.setChatList(id: self.chatListId)
+        print("已设置聊天列表ID: \(chatListId)")
         // 在初始化时自动启动欢迎对话
+        startWelcomeChat()
+    }
+    
+    // 添加创建新聊天的方法
+    func createNewChat() {
+        // 清除现有消息
+        messages.removeAll()
+        // 生成新的聊天列表ID
+        chatListId = UUID().uuidString
+        // 设置新的聊天列表ID
+        geminiService.setChatList(id: chatListId)
+        print("已创建新聊天，ID: \(chatListId)")
+        // 启动欢迎对话
         startWelcomeChat()
     }
     
@@ -107,6 +126,9 @@ class ChatViewModel: ObservableObject {
     func sendMessageWithImage(prompt: String) async {
         guard let image = userImage else { return }
         
+        // 确保设置了当前聊天列表ID
+        geminiService.setChatList(id: chatListId)
+        
         // 添加用户文本消息
         if !prompt.isEmpty {
             let userTextMessage = ChatMessage(role: .user, content: .text(prompt))
@@ -176,6 +198,9 @@ class ChatViewModel: ObservableObject {
     
     // 通用的生成内容聊天方法
     func startGenerationChat(prompt: String) async {
+        // 确保设置了当前聊天列表ID
+        geminiService.setChatList(id: chatListId)
+        
         // 如果有用户图片，则调用带图片的方法
         if userImage != nil {
             await sendMessageWithImage(prompt: prompt)
@@ -246,6 +271,9 @@ class ChatViewModel: ObservableObject {
     // 发送消息
     func sendMessage() async {
         guard !inputMessage.isEmpty else { return }
+        
+        // 确保设置了当前聊天列表ID
+        geminiService.setChatList(id: chatListId)
         
         // 如果有用户图片，则调用带图片的方法
         if userImage != nil {
@@ -481,7 +509,11 @@ class ChatViewModel: ObservableObject {
         self.messages = []
         self.currentlyGeneratingMessage = nil
         self.error = nil
-        print("已清除所有消息，准备开始新会话")
+        // 生成新的聊天列表ID
+        chatListId = UUID().uuidString
+        // 设置新的聊天列表ID
+        geminiService.setChatList(id: chatListId)
+        print("已清除所有消息，准备开始新会话，新聊天列表ID: \(chatListId)")
     }
 }
 
