@@ -327,12 +327,64 @@ class GeminiService {
             }
             
             // 处理内联数据（图像）
-            if let inlineData = part["inlineData"] as? [String: Any],
+            if let inlineData = part["inline_data"] as? [String: Any],
                let data = inlineData["data"] as? String,
-               let mimeType = inlineData["mimeType"] as? String,
+               let mimeType = inlineData["mime_type"] as? String,
                mimeType.hasPrefix("image/") {
                 
                 printResponseContent("图像内容: MimeType=\(mimeType), 数据长度=\(data.count)字节", type: "图像")
+                
+                // 检查数据是否为URL
+                if data.hasPrefix("http") {
+                    // 是URL路径，确保使用https
+                    var imageUrl = data
+                    if data.hasPrefix("http:") {
+                        imageUrl = "https:" + data.dropFirst(5)
+                    }
+                    
+                    print("图像URL: \(imageUrl)")
+                    
+                    do {
+                        // 下载图片并转换为Base64
+                        let base64Data = try await downloadImageAndConvertToBase64(from: imageUrl)
+                        
+                        // 创建图片内容项
+                        if let imageData = Data(base64Encoded: base64Data) {
+                            let contentItem = ContentItem(type: .image(imageData), timestamp: Date())
+                            currentContentItems.append(contentItem)
+                            await MainActor.run {
+                                self.currentUpdateHandler?(contentItem)
+                            }
+                        }
+                    } catch {
+                        print("下载或处理图片时出错: \(error.localizedDescription)")
+                        // 如果下载失败，仍然创建Markdown格式的图片内容作为备选
+                    let markdownImage = "![生成的图像](\(imageUrl))"
+                    let contentItem = ContentItem(type: .markdown(markdownImage), timestamp: Date())
+                    currentContentItems.append(contentItem)
+                    await MainActor.run {
+                        self.currentUpdateHandler?(contentItem)
+                        }
+                    }
+                } else if let imageData = Data(base64Encoded: data) {
+                    // 兼容旧格式：base64编码的图像数据
+                    print("成功解码图像数据，大小: \(imageData.count)字节")
+                    let contentItem = ContentItem(type: .image(imageData), timestamp: Date())
+                    currentContentItems.append(contentItem)
+                    await MainActor.run {
+                        self.currentUpdateHandler?(contentItem)
+                    }
+                } else {
+                    print("无法解码图像数据: 既不是有效URL也不是Base64数据")
+                }
+            }
+            // 处理内联数据的另一种形式（兼容不同API版本）
+            else if let inlineData = part["inlineData"] as? [String: Any],
+                    let data = inlineData["data"] as? String,
+                    let mimeType = inlineData["mimeType"] as? String,
+                    mimeType.hasPrefix("image/") {
+                
+                printResponseContent("图像内容(旧格式): MimeType=\(mimeType), 数据长度=\(data.count)字节", type: "图像")
                 
                 // 检查数据是否为URL
                 if data.hasPrefix("http") {
@@ -507,6 +559,8 @@ class GeminiService {
     private func prepareRequestContents(_ history: [GeminiChatMessage], userPrompt: String) -> [[String: Any]] {
         var contents: [[String: Any]] = []
         
+        print("准备请求内容，历史消息数: \(history.count), 用户提示: \(userPrompt)")
+        
         for (index, message) in history.enumerated() {
             var messageParts = message.parts
             
@@ -517,6 +571,7 @@ class GeminiService {
                 for part in messageParts {
                     if let text = part["text"] as? String, text == "INSERT_INPUT_HERE" {
                         newParts.append(["text": userPrompt])
+                        print("替换了INSERT_INPUT_HERE占位符为: \(userPrompt)")
                     } else {
                         newParts.append(part)
                     }
@@ -529,6 +584,17 @@ class GeminiService {
                 "role": message.role,
                 "parts": messageParts
             ])
+        }
+        
+        // 打印请求内容结构，确保格式正确
+        print("准备发送请求，内容结构:")
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: contents, options: .prettyPrinted)
+            if let jsonString = String(data: jsonData, encoding: .utf8) {
+                print(jsonString)
+            }
+        } catch {
+            print("无法序列化请求内容: \(error.localizedDescription)")
         }
         
         return contents
@@ -606,15 +672,21 @@ class GeminiService {
             ]
         ]
         
+        // 打印完整请求体，用于调试
+        print("完整请求体:")
+        do {
+            let debugJsonData = try JSONSerialization.data(withJSONObject: requestBody, options: .prettyPrinted)
+            if let jsonString = String(data: debugJsonData, encoding: .utf8) {
+                print(jsonString)
+            }
+        } catch {
+            print("无法序列化完整请求体用于调试: \(error.localizedDescription)")
+        }
+        
         // 序列化请求体为JSON
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: requestBody, options: [])
             request.httpBody = jsonData
-            
-            // 打印请求数据，用于调试
-            if let jsonString = String(data: jsonData, encoding: .utf8) {
-                print("请求JSON数据: \(jsonString)")
-            }
         } catch {
             throw NSError(domain: "GeminiService", code: 2, userInfo: [NSLocalizedDescriptionKey: "JSON序列化失败: \(error.localizedDescription)"])
         }
@@ -802,9 +874,9 @@ class GeminiService {
             parts: [
                 ["text": prompt],
                 [
-                    "fileData": [
+                    "inlineData": [
                         "mimeType": "image/jpeg",
-                        "fileUri": "data:image/jpeg;base64," + base64Image
+                        "data": base64Image
                     ]
                 ]
             ],
@@ -840,15 +912,21 @@ class GeminiService {
             ]
         ]
         
+        // 打印完整请求体，用于调试
+        print("完整请求体:")
+        do {
+            let debugJsonData = try JSONSerialization.data(withJSONObject: requestBody, options: .prettyPrinted)
+            if let jsonString = String(data: debugJsonData, encoding: .utf8) {
+                print(jsonString)
+            }
+        } catch {
+            print("无法序列化完整请求体用于调试: \(error.localizedDescription)")
+        }
+        
         // 序列化请求体为JSON
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: requestBody, options: [])
             request.httpBody = jsonData
-            
-            // 打印请求数据，用于调试
-            if let jsonString = String(data: jsonData, encoding: .utf8) {
-                print("请求JSON数据: \(jsonString)")
-            }
         } catch {
             throw NSError(domain: "GeminiService", code: 2, userInfo: [NSLocalizedDescriptionKey: "JSON序列化失败: \(error.localizedDescription)"])
         }
