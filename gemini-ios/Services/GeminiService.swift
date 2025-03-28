@@ -827,7 +827,7 @@ class GeminiService {
     }
     
     // 发送带图片的请求
-    func generateContentWithImage(prompt: String, image: UIImage, updateHandler: @escaping ContentUpdateHandler) async throws {
+    func generateContentWithImage(prompt: String, image: UIImage, useImageUpload: Bool = false, updateHandler: @escaping ContentUpdateHandler) async throws {
         // 确保有当前聊天列表ID
         guard let chatListId = currentChatListId else {
             throw NSError(domain: "GeminiService", code: 1004, userInfo: [NSLocalizedDescriptionKey: "未设置当前聊天列表ID"])
@@ -844,9 +844,7 @@ class GeminiService {
         print("\n=== 开始流式生成带图片的内容 ===")
         print("请求提示: \(prompt)")
         print("当前聊天列表ID: \(chatListId), 历史消息数量: \(chatHistory.count)")
-        
-        // 创建URL
-        //let urlString = "\(baseUrlString)/\(modelName):streamGenerateContent?key=\(geminiApiKey)&alt=sse"
+        print("图片处理方式: \(useImageUpload ? "上传图片获取URL" : "直接使用base64编码")")
         
         // 创建URL
         let urlString = "\(baseUrlString)"
@@ -861,24 +859,60 @@ class GeminiService {
         request.addValue("Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbnRhZXVzMDAxIiwiaWF0IjoxNzM1NjI0NDAzLCJleHAiOjE3NDQyNjQ0MDN9.ZrV6qOhbk1Ct4J8o3gvLcoeycQz_yItasitVfS5sR50", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 180
         
-        // 将图片转换为base64
-        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+        // 处理图片：或者使用base64编码，或者上传图片获取URL
+        let imageData: Data
+        let inlineDataDict: [String: Any]
+        
+        // 首先将图片转换为JPEG数据
+        guard let jpegData = image.jpegData(compressionQuality: 0.8) else {
             throw NSError(domain: "GeminiService", code: 3, userInfo: [NSLocalizedDescriptionKey: "无法将图片转换为数据"])
         }
         
+        imageData = jpegData
+        
+        if useImageUpload {
+            // 上传图片并获取URL
+            do {
+                let imageUrl = try await uploadImage(image: image)
+                inlineDataDict = [
+                    "mimeType": "image/jpeg",
+                    "data": imageUrl
+                ]
+                print("使用上传的图片URL: \(imageUrl)")
+            } catch {
+                print("图片上传失败，尝试使用base64编码: \(error.localizedDescription)")
+                // 如果上传失败，回退到base64编码
         let base64Image = imageData.base64EncodedString()
+                inlineDataDict = [
+                    "mimeType": "image/jpeg",
+                    "data": base64Image
+                ]
+                
+                // 打印base64编码的调试信息
+                print("Base64图片前20个字符: \(base64Image.prefix(20))...")
+                print("Base64图片长度: \(base64Image.count)字节")
+                print("Base64图片是否有效: \(Data(base64Encoded: base64Image) != nil)")
+            }
+        } else {
+            // 直接使用base64编码
+            let base64Image = imageData.base64EncodedString()
+            inlineDataDict = [
+                "mimeType": "image/jpeg",
+                "data": base64Image
+            ]
+            
+            // 打印base64编码的调试信息
+            print("Base64图片前20个字符: \(base64Image.prefix(20))...")
+            print("Base64图片长度: \(base64Image.count)字节")
+            print("Base64图片是否有效: \(Data(base64Encoded: base64Image) != nil)")
+        }
         
         // 构建用户消息，包含文本和图像
         let userMessage = GeminiChatMessage(
             role: "user",
             parts: [
                 ["text": prompt],
-                [
-                    "inlineData": [
-                        "mimeType": "image/jpeg",
-                        "data": base64Image
-                    ]
-                ]
+                ["inlineData": inlineDataDict]
             ],
             contentItems: [
                 ContentItem(type: .text(prompt), timestamp: Date()),
@@ -1063,6 +1097,330 @@ class GeminiService {
             saveStreamLogToFile()
             
             print("=== 流式生成带图片的内容出错 ===\n错误详情: \(error)")
+            throw NSError(domain: "GeminiService", code: 1002, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+        }
+    }
+    
+    // 上传图片到服务器
+    func uploadImage(image: UIImage) async throws -> String {
+        print("开始上传图片，尺寸: \(image.size.width) x \(image.size.height)")
+        
+        // 创建URL
+        let urlString = "https://huohuaai.com/api/v1/images/upload"
+        guard let url = URL(string: urlString) else {
+            throw NSError(domain: "GeminiService", code: 1, userInfo: [NSLocalizedDescriptionKey: "无效的图片上传URL"])
+        }
+        
+        // 将图片转换为JPEG数据
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+            throw NSError(domain: "GeminiService", code: 3, userInfo: [NSLocalizedDescriptionKey: "无法将图片转换为数据"])
+        }
+        
+        // 生成唯一的边界字符串
+        let boundary = UUID().uuidString
+        
+        // 创建请求
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.addValue("Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbnRhZXVzMDAxIiwiaWF0IjoxNzM1NjI0NDAzLCJleHAiOjE3NDQyNjQ0MDN9.ZrV6qOhbk1Ct4J8o3gvLcoeycQz_yItasitVfS5sR50", forHTTPHeaderField: "Authorization")
+        
+        // 创建表单数据
+        var body = Data()
+        
+        // 添加文件数据
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"image.jpg\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+        body.append(imageData)
+        body.append("\r\n".data(using: .utf8)!)
+        
+        // 添加结束边界
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        
+        // 设置请求体
+        request.httpBody = body
+        
+        // 发送请求
+        do {
+            print("发送图片上传请求，图片大小: \(imageData.count) 字节")
+            let (data, response) = try await urlSession.data(for: request)
+            
+            // 检查HTTP响应状态
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw NSError(domain: "GeminiService", code: 6, userInfo: [NSLocalizedDescriptionKey: "无效的HTTP响应"])
+            }
+            
+            print("图片上传HTTP响应状态: \(httpResponse.statusCode)")
+            
+            // 解析响应数据
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("图片上传响应: \(responseString)")
+            }
+            
+            // 检查非200状态码
+            if httpResponse.statusCode != 200 {
+                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let message = errorJson["message"] as? String {
+                    throw NSError(domain: "GeminiService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+                } else if let errorText = String(data: data, encoding: .utf8) {
+                    throw NSError(domain: "GeminiService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP错误 \(httpResponse.statusCode): \(errorText)"])
+                } else {
+                    throw NSError(domain: "GeminiService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP错误 \(httpResponse.statusCode)"])
+                }
+            }
+            
+            // 解析响应JSON
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let code = json["code"] as? Int else {
+                throw NSError(domain: "GeminiService", code: 7, userInfo: [NSLocalizedDescriptionKey: "无法解析响应JSON"])
+            }
+            
+            // 检查响应码
+            if code == 0, let imageUrl = json["data"] as? String {
+                print("图片上传成功，URL: \(imageUrl)")
+                return imageUrl
+            } else {
+                let message = json["message"] as? String ?? "未知错误"
+                throw NSError(domain: "GeminiService", code: 8, userInfo: [NSLocalizedDescriptionKey: "上传失败: \(message)"])
+            }
+        } catch {
+            print("图片上传错误: \(error.localizedDescription)")
+            throw NSError(domain: "GeminiService", code: 9, userInfo: [NSLocalizedDescriptionKey: "图片上传失败: \(error.localizedDescription)"])
+        }
+    }
+    
+    // 使用图片URL发送带图片的请求
+    func generateContentWithImageUrl(prompt: String, imageUrl: String, updateHandler: @escaping ContentUpdateHandler) async throws {
+        // 确保有当前聊天列表ID
+        guard let chatListId = currentChatListId else {
+            throw NSError(domain: "GeminiService", code: 1004, userInfo: [NSLocalizedDescriptionKey: "未设置当前聊天列表ID"])
+        }
+        
+        // 重置状态
+        currentContentItems = []
+        isStreamActive = true
+        currentUpdateHandler = updateHandler
+        chunkCounter = 0
+        completeStreamLog = "=== 流式生成带图片URL的内容开始 ===\n时间: \(Date())\n请求提示: \(prompt)\n图像URL: \(imageUrl)\n"
+        streamStartTime = Date()
+        
+        print("\n=== 开始流式生成带图片URL的内容 ===")
+        print("请求提示: \(prompt)")
+        print("当前聊天列表ID: \(chatListId), 历史消息数量: \(chatHistory.count)")
+        print("使用图片URL: \(imageUrl)")
+        
+        // 创建URL
+        let urlString = "\(baseUrlString)"
+        guard let url = URL(string: urlString) else {
+            throw NSError(domain: "GeminiService", code: 1, userInfo: [NSLocalizedDescriptionKey: "无效的URL"])
+        }
+        
+        // 创建请求
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue("Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbnRhZXVzMDAxIiwiaWF0IjoxNzM1NjI0NDAzLCJleHAiOjE3NDQyNjQ0MDN9.ZrV6qOhbk1Ct4J8o3gvLcoeycQz_yItasitVfS5sR50", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 180
+        
+        // 创建内联数据字典，使用URL
+        let inlineDataDict: [String: Any] = [
+            "mimeType": "image/jpeg",
+            "data": imageUrl
+        ]
+        
+        // 创建一个无图像数据的ContentItem，只用于UI显示
+        let dummyImageData = Data() // 空数据，因为实际图像数据在服务器上
+        
+        // 构建用户消息，包含文本和图像URL
+        let userMessage = GeminiChatMessage(
+            role: "user",
+            parts: [
+                ["text": prompt],
+                ["inlineData": inlineDataDict]
+            ],
+            contentItems: [
+                ContentItem(type: .text(prompt), timestamp: Date()),
+                ContentItem(type: .image(dummyImageData), timestamp: Date()) // 仅用于UI显示
+            ]
+        )
+        
+        // 添加到聊天历史
+        chatHistory.append(userMessage)
+        // 同时更新chatLists中的记录
+        if let id = currentChatListId {
+            chatLists[id] = chatHistory
+        }
+        
+        // 整合连续的model消息
+        let consolidatedHistory = consolidateModelMessages(chatHistory)
+        
+        // 准备请求内容，替换占位符
+        let requestContents = prepareRequestContents(consolidatedHistory, userPrompt: prompt)
+        
+        // 构建请求体
+        var requestBody: [String: Any] = [
+            "contents": requestContents,
+            "generationConfig": [
+                "temperature": 1.0,
+                "topK": 40,
+                "topP": 0.95,
+                "maxOutputTokens": 8192,
+                "responseMimeType": "text/plain",
+                "responseModalities": ["image", "text"]
+            ]
+        ]
+        
+        // 打印完整请求体，用于调试
+        print("完整请求体:")
+        do {
+            let debugJsonData = try JSONSerialization.data(withJSONObject: requestBody, options: .prettyPrinted)
+            if let jsonString = String(data: debugJsonData, encoding: .utf8) {
+                print(jsonString)
+            }
+        } catch {
+            print("无法序列化完整请求体用于调试: \(error.localizedDescription)")
+        }
+        
+        // 序列化请求体为JSON
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: requestBody, options: [])
+            request.httpBody = jsonData
+        } catch {
+            throw NSError(domain: "GeminiService", code: 2, userInfo: [NSLocalizedDescriptionKey: "JSON序列化失败: \(error.localizedDescription)"])
+        }
+        
+        // 创建模型响应部分集合
+        var modelParts: [[String: Any]] = []
+        
+        // 使用URLSession发送请求并读取流式响应
+        guard let url = request.url else {
+            throw NSError(domain: "GeminiService", code: 1001, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+        }
+        
+        print("发起带图片URL的API请求: \(url.absoluteString)")
+        print("使用模型: \(modelName)")
+        
+        do {
+            let (bytes, response) = try await urlSession.bytes(for: request)
+            
+            // 检查HTTP响应状态
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw NSError(domain: "GeminiService", code: 6, userInfo: [NSLocalizedDescriptionKey: "无效的HTTP响应"])
+            }
+            
+            print("HTTP响应状态: \(httpResponse.statusCode)")
+            print("HTTP响应头: \(httpResponse.allHeaderFields)")
+            
+            // 检查非200状态码
+            if httpResponse.statusCode != 200 {
+                // 读取错误消息
+                var errorData = Data()
+                for try await byte in bytes {
+                    errorData.append(byte)
+                }
+                
+                if let errorJson = try? JSONSerialization.jsonObject(with: errorData) as? [String: Any],
+                   let error = errorJson["error"] as? [String: Any],
+                   let message = error["message"] as? String {
+                    throw NSError(domain: "GeminiService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+                } else if let errorText = String(data: errorData, encoding: .utf8) {
+                    throw NSError(domain: "GeminiService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP错误 \(httpResponse.statusCode): \(errorText)"])
+                } else {
+                    throw NSError(domain: "GeminiService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP错误 \(httpResponse.statusCode)"])
+                }
+            }
+            
+            // 保存SSE响应到文件（用于调试）
+            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let timeStamp = Date().timeIntervalSince1970
+            let filePath = documentsPath.appendingPathComponent("gemini_sse_\(timeStamp).json")
+            
+            // 先创建文件，避免"file doesn't exist"错误
+            FileManager.default.createFile(atPath: filePath.path, contents: nil, attributes: nil)
+            
+            let fileHandle = try FileHandle(forWritingTo: filePath)
+            defer { fileHandle.closeFile() }
+            
+            print("将响应保存到: \(filePath.path)")
+            
+            // 处理流式响应
+            var characterBuffer = [UInt8]()
+            
+            for try await byte in bytes {
+                // 如果停止标志被设置，退出循环
+                if !isStreamActive {
+                    print("流已被手动停止")
+                    break
+                }
+                
+                // 添加字节到字符缓冲区
+                characterBuffer.append(byte)
+                
+                // 写入调试文件
+                fileHandle.write(Data([byte]))
+                
+                // 当遇到换行符时处理一行
+                if byte == 10 { // 换行符 '\n'
+                    if let line = String(bytes: characterBuffer, encoding: .utf8) {
+                        await handleSSELine(line.trimmingCharacters(in: .whitespacesAndNewlines), modelParts: &modelParts)
+                    }
+                    characterBuffer.removeAll()
+                }
+            }
+            
+            // 处理可能的最后一行（没有换行符结束）
+            if !characterBuffer.isEmpty {
+                if let line = String(bytes: characterBuffer, encoding: .utf8) {
+                    await handleSSELine(line.trimmingCharacters(in: .whitespacesAndNewlines), modelParts: &modelParts)
+                }
+            }
+            
+            // 将完整的模型响应添加到聊天历史
+            if !modelParts.isEmpty || !currentContentItems.isEmpty {
+                let modelMessage = GeminiChatMessage(
+                    role: "model",
+                    parts: modelParts,
+                    contentItems: currentContentItems
+                )
+                chatHistory.append(modelMessage)
+                // 同时更新chatLists中的记录
+                if let id = currentChatListId {
+                    chatLists[id] = chatHistory
+                }
+                print("添加模型消息到聊天历史，部分数量: \(modelParts.count), 内容项数量: \(currentContentItems.count)")
+            } else {
+                print("没有收集到任何模型部分，无法添加到聊天历史")
+            }
+            
+            // 添加结束信息到日志并保存
+            let elapsedTime = Date().timeIntervalSince(streamStartTime)
+            completeStreamLog += "\n=== 流式生成带图片URL的内容结束 ===\n耗时: \(elapsedTime)秒\n"
+            saveStreamLogToFile()
+            
+            print("=== 流式生成带图片URL的内容结束 ===\n")
+        } catch {
+            // 添加错误信息到日志并保存
+            let errorMessage: String
+            if let urlError = error as? URLError {
+                switch urlError.code {
+                case .timedOut:
+                    errorMessage = "请求超时，请重试。对于大型内容生成，可能需要更长的处理时间。"
+                case .notConnectedToInternet:
+                    errorMessage = "网络连接错误，请检查您的网络连接后重试。"
+                case .cancelled:
+                    errorMessage = "请求已取消。"
+                default:
+                    errorMessage = "网络错误: \(urlError.localizedDescription)"
+                }
+            } else {
+                errorMessage = "API请求失败: \(error.localizedDescription)"
+            }
+            
+            completeStreamLog += "\n=== 流式生成内容出错 ===\n错误: \(errorMessage)\n"
+            saveStreamLogToFile()
+            
+            print("=== 流式生成内容出错 ===\n错误详情: \(error)")
             throw NSError(domain: "GeminiService", code: 1002, userInfo: [NSLocalizedDescriptionKey: errorMessage])
         }
     }

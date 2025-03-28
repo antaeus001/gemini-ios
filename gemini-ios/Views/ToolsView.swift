@@ -3,7 +3,7 @@ import SwiftUI
 // 工具视图 - 样例库
 struct ToolsView: View {
     @State private var selectedCategory: String = "全部"
-    let categories = ["全部", "图像", "文本", "设计", "代码"]
+    let categories = ["全部", "图像", "文本", "设计", "代码", "上传图片"]
     @EnvironmentObject var chatViewModel: ChatViewModel
     @State private var showingChatView = false
     
@@ -48,15 +48,20 @@ struct ToolsView: View {
             // 分割线
             Divider()
             
-            // 样例列表
-            ScrollView {
-                LazyVStack(spacing: 15) {
-                    ForEach(filteredExamples) { example in
-                        ToolExampleCard(example: example)
-                            .padding(.horizontal)
+            // 根据选择显示不同内容
+            if selectedCategory == "上传图片" {
+                ImageUploadView()
+            } else {
+                // 样例列表
+                ScrollView {
+                    LazyVStack(spacing: 15) {
+                        ForEach(filteredExamples) { example in
+                            ToolExampleCard(example: example)
+                                .padding(.horizontal)
+                        }
                     }
+                    .padding(.vertical)
                 }
-                .padding(.vertical)
             }
         }
     }
@@ -273,6 +278,236 @@ struct ToolExample: Identifiable {
     let description: String
     let category: String
     let prompt: String
+}
+
+// 图片上传视图
+struct ImageUploadView: View {
+    @EnvironmentObject var chatViewModel: ChatViewModel
+    @State private var showingImagePicker = false
+    @State private var showingActionSheet = false
+    @State private var showingLoading = false
+    @State private var uploadedImageURL: String? = nil
+    @State private var errorMessage: String? = nil
+    
+    var body: some View {
+        VStack(spacing: 15) {
+            Text("图片上传工具")
+                .font(.headline)
+                .padding(.top)
+            
+            if chatViewModel.userImage != nil {
+                Image(uiImage: chatViewModel.userImage!)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 200)
+                    .cornerRadius(12)
+                    .padding()
+                
+                if let url = uploadedImageURL {
+                    VStack {
+                        Text("图片已上传，链接：")
+                            .font(.subheadline)
+                        Text(url)
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                            .padding(.horizontal)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .onTapGesture {
+                                UIPasteboard.general.string = url
+                            }
+                            
+                        Button(action: {
+                            // 使用上传的图片URL创建对话
+                            startChatWithImageUrl(url)
+                        }) {
+                            Text("开始对话")
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 10)
+                                .background(Color.green)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                        }
+                        .padding(.top, 8)
+                    }
+                    .padding()
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                
+                if let error = errorMessage {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                        .padding()
+                }
+                
+                HStack(spacing: 20) {
+                    Button(action: {
+                        chatViewModel.userImage = nil
+                        uploadedImageURL = nil
+                        errorMessage = nil
+                    }) {
+                        Text("清除")
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .background(Color.red.opacity(0.1))
+                            .foregroundColor(.red)
+                            .cornerRadius(8)
+                    }
+                    
+                    Button(action: {
+                        uploadImage()
+                    }) {
+                        HStack {
+                            if showingLoading {
+                                ProgressView()
+                                    .frame(width: 16, height: 16)
+                            }
+                            Text(uploadedImageURL == nil ? "上传图片" : "重新上传")
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
+                    .disabled(showingLoading)
+                }
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.gray.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [5]))
+                        .frame(height: 200)
+                        .padding()
+                    
+                    VStack {
+                        Image(systemName: "photo")
+                            .font(.largeTitle)
+                            .foregroundColor(.gray)
+                        
+                        Text("从相册选择图片")
+                            .font(.headline)
+                            .foregroundColor(.gray)
+                            .padding(.top, 8)
+                        
+                        Button(action: {
+                            showingActionSheet = true
+                        }) {
+                            Text("选择图片")
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 10)
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                        }
+                        .padding(.top, 12)
+                    }
+                }
+            }
+        }
+        .padding()
+        .sheet(isPresented: $showingImagePicker) {
+            ImagePicker(selectedImage: $chatViewModel.userImage)
+        }
+        .actionSheet(isPresented: $showingActionSheet) {
+            ActionSheet(
+                title: Text("选择图片来源"),
+                buttons: [
+                    .default(Text("相册")) {
+                        showingImagePicker = true
+                    },
+                    .cancel(Text("取消"))
+                ]
+            )
+        }
+    }
+    
+    // 上传图片方法
+    private func uploadImage() {
+        guard chatViewModel.userImage != nil else { return }
+        
+        // 设置加载状态
+        showingLoading = true
+        errorMessage = nil
+        
+        // 执行上传
+        Task {
+            do {
+                if let imageUrl = await chatViewModel.uploadUserImage() {
+                    // 更新UI
+                    await MainActor.run {
+                        uploadedImageURL = imageUrl
+                        showingLoading = false
+                    }
+                } else {
+                    // 显示错误
+                    await MainActor.run {
+                        errorMessage = chatViewModel.error ?? "上传失败"
+                        showingLoading = false
+                    }
+                }
+            }
+        }
+    }
+    
+    // 启动使用图片URL的对话
+    private func startChatWithImageUrl(_ imageUrl: String) {
+        // 通知需要切换到聊天标签
+        NotificationCenter.default.post(name: NSNotification.Name("SwitchToChat"), object: nil)
+        
+        // 使用延迟允许视图有时间切换
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            Task {
+                // 清除当前会话
+                chatViewModel.clearMessages()
+                
+                // 创建一个初始提示，让模型知道它将处理图像
+                let initialPrompt = "请分析这张图片并告诉我你看到了什么内容。"
+                
+                // 启动对话
+                try? await chatViewModel.sendMessageWithImageUrl(prompt: initialPrompt, imageUrl: imageUrl)
+            }
+        }
+    }
+}
+
+// 图片选择器
+struct ImagePicker: UIViewControllerRepresentable {
+    @Binding var selectedImage: UIImage?
+    @Environment(\.presentationMode) private var presentationMode
+    
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.delegate = context.coordinator
+        picker.sourceType = .photoLibrary
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: ImagePicker
+        
+        init(_ parent: ImagePicker) {
+            self.parent = parent
+        }
+        
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.selectedImage = image
+            }
+            parent.presentationMode.wrappedValue.dismiss()
+        }
+        
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.presentationMode.wrappedValue.dismiss()
+        }
+    }
 }
 
 #Preview {

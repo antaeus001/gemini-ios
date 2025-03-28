@@ -50,3 +50,27 @@ public enum MixedContentItem: Identifiable, Equatable {
 }
 
 // 然后在ChatMessage.swift和GeminiService.swift中导入这个模块并使用这些共享类型
+
+// 图片上传管理器
+class ImageUploader {
+    static let shared = ImageUploader()
+    
+    // 上传图片方法，使用GeminiService的uploadImage方法
+    func uploadImage(_ image: UIImage) async throws -> String {
+        return try await GeminiService.shared.uploadImage(image: image)
+    }
+    
+    // 提供一个便利方法，直接从URL获取图片
+    func getImage(from url: String) async throws -> UIImage? {
+        guard let url = URL(string: url) else {
+            throw NSError(domain: "ImageUploader", code: 1, userInfo: [NSLocalizedDescriptionKey: "无效的图片URL"])
+        }
+        
+        let (data, _) = try await URLSession.shared.data(from: url)
+        guard let image = UIImage(data: data) else {
+            throw NSError(domain: "ImageUploader", code: 2, userInfo: [NSLocalizedDescriptionKey: "无法从数据创建图片"])
+        }
+        
+        return image
+    }
+}
