@@ -6,6 +6,7 @@ enum ContentItemType {
     case text(String)
     case image(Data)
     case markdown(String)
+    case imageUrl(String)
 }
 
 // 内容项结构

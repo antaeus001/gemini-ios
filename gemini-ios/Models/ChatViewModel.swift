@@ -85,6 +85,8 @@ class ChatViewModel: ObservableObject {
                 print(" - 混合内容，项目数: \(items.count)")
             case .image:
                 print(" - 图像内容")
+            case .imageUrl(let url):
+                print(" - 图像URL内容: \(url)")
             }
         }
         
@@ -117,7 +119,7 @@ class ChatViewModel: ObservableObject {
         self.userImage = image
         
         // 添加图片到聊天界面
-        let userMessage = ChatMessage(role: .user, content: .image(image))
+        let userMessage = ChatMessage(role: .user, content: .image(image, UUID()))
         messages.append(userMessage)
         objectWillChange.send()  // 确保触发UI更新
     }
@@ -577,11 +579,16 @@ class ChatViewModel: ObservableObject {
         case .image(let imageData):
             if let image = UIImage(data: imageData) {
                 // 添加图像项，自动生成新ID
-                mixedItems.append(.image(image))
+                mixedItems.append(.image(image, UUID()))
                 print("添加图像内容项，大小: \(imageData.count) 字节")
             } else {
                 print("警告: 无法从数据创建图像，大小: \(imageData.count) 字节")
             }
+            
+        case .imageUrl(let url):
+            // 添加图像URL项，自动生成新ID
+            mixedItems.append(.imageUrl(url, UUID()))
+            print("添加图像URL内容项: \(url)")
         }
         
         // 仅当有内容变化时才更新
@@ -637,6 +644,53 @@ class ChatViewModel: ObservableObject {
         // 设置新的聊天列表ID
         geminiService.setChatList(id: chatListId)
         print("已清除所有消息，准备开始新会话，新聊天列表ID: \(chatListId)")
+    }
+    
+    // 在ChatViewModel类中添加新方法
+    func addImageUrlToChat(imageUrl: String) {
+        // 确保设置了当前聊天列表ID
+        geminiService.setChatList(id: chatListId)
+        
+        // 创建包含URL图片的用户消息
+        let userMessage = ChatMessage(role: .user, content: .imageUrl(imageUrl))
+        messages.append(userMessage)
+        objectWillChange.send()  // 确保触发UI更新
+    }
+    
+    // 在ChatViewModel类中添加新方法
+    func loadImageFromUrl(imageUrl: String) async {
+        // 确保URL有效
+        guard let url = URL(string: imageUrl) else {
+            print("图片URL无效: \(imageUrl)")
+            return
+        }
+        
+        do {
+            // 使用URLSession加载图片
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            // 检查HTTP响应状态码
+            if let httpResponse = response as? HTTPURLResponse, 
+               !(200...299).contains(httpResponse.statusCode) {
+                print("加载图片失败，HTTP状态码: \(httpResponse.statusCode)")
+                return
+            }
+            
+            // 从数据创建图像
+            if let image = UIImage(data: data) {
+                // 在主线程更新UI
+                await MainActor.run {
+                    // 将图片添加到聊天界面
+                    let assistantMessage = ChatMessage(role: .assistant, content: .image(image, UUID()))
+                    messages.append(assistantMessage)
+                    objectWillChange.send()  // 确保触发UI更新
+                }
+            } else {
+                print("无法从数据创建图像")
+            }
+        } catch {
+            print("加载图片出错: \(error.localizedDescription)")
+        }
     }
 }
 

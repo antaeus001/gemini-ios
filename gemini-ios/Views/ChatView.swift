@@ -491,7 +491,7 @@ struct MessageView: View {
                     .padding(12)
                     .fixedSize(horizontal: false, vertical: true)
                 
-            case .image(let image):
+            case .image(let image, _):
                 Button(action: {
                     enlargedImage = image
                 }) {
@@ -510,6 +510,12 @@ struct MessageView: View {
                                 .padding(8),
                             alignment: .bottom
                         )
+                }
+                .padding(4)
+                
+            case .imageUrl(let imageUrl):
+                NetworkImageView(url: URL(string: imageUrl)) { image in
+                    enlargedImage = image
                 }
                 .padding(4)
                 
@@ -565,6 +571,12 @@ struct MessageView: View {
                                             .padding(8),
                                         alignment: .bottom
                                     )
+                            }
+                            .padding(.vertical, 4)
+                            
+                        case .imageUrl(let imageUrl, _):
+                            NetworkImageView(url: URL(string: imageUrl)) { image in
+                                enlargedImage = image
                             }
                             .padding(.vertical, 4)
                         }

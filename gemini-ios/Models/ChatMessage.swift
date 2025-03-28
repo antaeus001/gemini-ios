@@ -5,20 +5,18 @@ import UIKit
 // 枚举定义消息内容类型
 enum ChatContentType: Equatable {
     case text(String)
-    case image(UIImage)
+    case image(UIImage, UUID = UUID())
     case mixedContent([MixedContentItem])
     case markdown(String)
+    case imageUrl(String)
     
     static func == (lhs: ChatContentType, rhs: ChatContentType) -> Bool {
         switch (lhs, rhs) {
         case (.text(let lhsText), .text(let rhsText)):
             return lhsText == rhsText
-        case (.image(let lhsImage), .image(let rhsImage)):
-            // 由于UIImage没有原生实现Equatable，我们可以比较它们的pngData
-            if let lhsData = lhsImage.pngData(), let rhsData = rhsImage.pngData() {
-                return lhsData == rhsData
-            }
-            return false
+        case (.image(_, let lhsUUID), .image(_, let rhsUUID)):
+            // 比较UUID而不是图像数据
+            return lhsUUID == rhsUUID
         case (.mixedContent(let lhsItems), .mixedContent(let rhsItems)):
             guard lhsItems.count == rhsItems.count else { return false }
             // 比较每个项目
@@ -30,6 +28,8 @@ enum ChatContentType: Equatable {
             return true
         case (.markdown(let lhsText), .markdown(let rhsText)):
             return lhsText == rhsText
+        case (.imageUrl(let lhsUrl), .imageUrl(let rhsUrl)):
+            return lhsUrl == rhsUrl
         default:
             // 不同类型的内容不相等
             return false

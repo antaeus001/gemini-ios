@@ -14,6 +14,7 @@ public enum MixedContentItem: Identifiable, Equatable {
     case text(String, UUID = UUID())
     case image(UIImage, UUID = UUID())
     case markdown(String, UUID = UUID())
+    case imageUrl(String, UUID = UUID())
     
     // 使用计算属性获取关联值中的UUID
     public var id: UUID {
@@ -23,6 +24,8 @@ public enum MixedContentItem: Identifiable, Equatable {
         case .image(_, let id):
             return id
         case .markdown(_, let id):
+            return id
+        case .imageUrl(_, let id):
             return id
         }
     }
@@ -42,6 +45,8 @@ public enum MixedContentItem: Identifiable, Equatable {
 //            return false
         case (.markdown(let lhsText, _), .markdown(let rhsText, _)):
             return lhsText == rhsText
+        case (.imageUrl(let lhsUrl, _), .imageUrl(let rhsUrl, _)):
+            return lhsUrl == rhsUrl
         default:
             // 不同类型的项目不相等
             return false
