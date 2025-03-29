@@ -385,6 +385,20 @@ struct ChatView: View {
             )
         }
         .background(Color(.secondarySystemBackground))
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    viewModel.createNewChat()
+                    imageItems.removeAll()
+                    cachedTextEditorHeight = 37
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus.bubble")
+                        Text("新会话")
+                    }
+                }
+            }
+        }
         .onChange(of: photoItems) { _, newItems in
             if !newItems.isEmpty {
                 Task {
