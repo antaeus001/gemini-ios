@@ -295,8 +295,8 @@ struct ImageUploadView: View {
                 .font(.headline)
                 .padding(.top)
             
-            if chatViewModel.userImage != nil {
-                Image(uiImage: chatViewModel.userImage!)
+            if chatViewModel.userImages.count > 0 {
+                Image(uiImage: chatViewModel.userImages.first!)
                     .resizable()
                     .scaledToFit()
                     .frame(height: 200)
@@ -344,7 +344,7 @@ struct ImageUploadView: View {
                 
                 HStack(spacing: 20) {
                     Button(action: {
-                        chatViewModel.userImage = nil
+                        chatViewModel.userImages = []
                         uploadedImageURL = nil
                         errorMessage = nil
                     }) {
@@ -408,7 +408,16 @@ struct ImageUploadView: View {
         }
         .padding()
         .sheet(isPresented: $showingImagePicker) {
-            ImagePicker(selectedImage: $chatViewModel.userImage)
+            ImagePicker(selectedImage: Binding(
+                get: { chatViewModel.userImages.first },
+                set: { newImage in
+                    if let newImage = newImage {
+                        chatViewModel.userImages = [newImage]
+                    } else {
+                        chatViewModel.userImages = []
+                    }
+                }
+            ))
         }
         .actionSheet(isPresented: $showingActionSheet) {
             ActionSheet(
@@ -425,7 +434,7 @@ struct ImageUploadView: View {
     
     // 上传图片方法
     private func uploadImage() {
-        guard chatViewModel.userImage != nil else { return }
+        guard !chatViewModel.userImages.isEmpty else { return }
         
         // 设置加载状态
         showingLoading = true

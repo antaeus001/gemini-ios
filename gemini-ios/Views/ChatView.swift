@@ -84,19 +84,197 @@ extension Theme {
     }
 }
 
+// 将 ImagePreviewItem 保留在文件开头
+struct ImagePreviewItem: Identifiable {
+    let id: UUID
+    let image: UIImage
+}
+
+// 聊天输入视图组件
+struct ChatInputView: View {
+    @ObservedObject var viewModel: ChatViewModel
+    @Binding var photoItems: [PhotosPickerItem]
+    @Binding var imageItems: [ImagePreviewItem]
+    @FocusState var isInputFocused: Bool
+    @Binding var cachedTextEditorHeight: CGFloat
+    @Binding var lastInputText: String
+    
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            // 图片选择器
+            PhotosPicker(selection: $photoItems, maxSelectionCount: 5, matching: .images) {
+                Image(systemName: "photo")
+                    .font(.system(size: 24))
+                    .foregroundColor(.blue)
+            }
+            .onChange(of: photoItems) { _, _ in
+                // 变更处理移到ChatView中
+            }
+            
+            // 输入框
+            ZStack(alignment: .bottomTrailing) {
+                // 自适应高度的文本编辑器
+                TextEditor(text: $viewModel.inputMessage)
+                    .focused($isInputFocused)
+                    .frame(height: max(37, cachedTextEditorHeight))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(18)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18)
+                            .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                    )
+                    .onChange(of: viewModel.inputMessage) { _, newValue in
+                        // 只有当文本真正变化时才更新高度
+                        if newValue != lastInputText {
+                            lastInputText = newValue
+                            recalculateTextEditorHeight(text: newValue)
+                        }
+                    }
+                
+                // 清除文本按钮
+                if !viewModel.inputMessage.isEmpty {
+                    Button(action: {
+                        viewModel.inputMessage = ""
+                        cachedTextEditorHeight = 37 // 重置高度
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.gray)
+                            .padding(8)
+                    }
+                    .padding(.trailing, 4)
+                    .padding(.bottom, 4)
+                }
+            }
+            
+            // 发送按钮
+            Button(action: {
+                // 添加 Task 以支持异步调用
+                Task {
+                    await viewModel.sendMessage()
+                    // 清空输入框和选择的图片在 Task 中执行
+                    cachedTextEditorHeight = 37
+                    isInputFocused = false
+                }
+            }) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundColor(viewModel.inputMessage.isEmpty && viewModel.userImages.isEmpty ? .gray : .blue)
+            }
+            .disabled(viewModel.inputMessage.isEmpty && viewModel.userImages.isEmpty)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+    
+    // 重新计算文本高度
+    private func recalculateTextEditorHeight(text: String) {
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let attributes = [NSAttributedString.Key.font: font]
+        let size = (text as NSString).boundingRect(
+            with: CGSize(width: UIScreen.main.bounds.width - 90, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes,
+            context: nil
+        )
+        
+        let calculatedHeight = min(max(size.height + 20, 37), 150)
+        
+        // 只有当高度变化较大时才更新，避免微小变化引起的闪烁
+        if abs(calculatedHeight - cachedTextEditorHeight) > 5 {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                cachedTextEditorHeight = calculatedHeight
+            }
+        }
+    }
+}
+
+// 图片预览区域视图
+struct ImagePreviewArea: View {
+    @ObservedObject var viewModel: ChatViewModel
+    @Binding var imageItems: [ImagePreviewItem]
+    
+    var body: some View {
+        VStack {
+            HStack {
+                Text("已选择 \(imageItems.count) 张图片")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                
+                Spacer()
+                
+                Button(action: {
+                    viewModel.userImages.removeAll()
+                    imageItems.removeAll()
+                }) {
+                    Text("清除全部")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+            }
+            .padding(.horizontal)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(imageItems) { item in
+                        ZStack(alignment: .topTrailing) {
+                            Image(uiImage: item.image)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 80, height: 80)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+                            
+                            Button(action: {
+                                // 找到要删除的图片在 viewModel.userImages 中的索引
+                                if let index = imageItems.firstIndex(where: { $0.id == item.id }),
+                                   index < viewModel.userImages.count {
+                                    viewModel.userImages.remove(at: index)
+                                    imageItems.remove(at: index)
+                                }
+                            }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.white)
+                                    .background(Color.black.opacity(0.5))
+                                    .clipShape(Circle())
+                            }
+                            .padding(4)
+                        }
+                    }
+                }
+                .padding(.horizontal)
+            }
+            
+            Text("请输入提示词并点击发送按钮")
+                .font(.caption)
+                .foregroundColor(.gray)
+                .padding(.bottom, 4)
+        }
+        .padding(.vertical, 8)
+        .background(Color(.systemBackground))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                .padding(.horizontal, 8)
+        )
+    }
+}
+
+// 简化 ChatView
 struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
-    @State private var imagePickerVisible = false
-    @State private var selectedImage: UIImage?
-    @State private var photoItem: PhotosPickerItem?
-    @State private var messageCounter: Int = 0
-    @FocusState private var isInputFocused: Bool
-    @State private var isScrolledToBottom = true // 新增：跟踪是否已滚动到底部
+    @State private var photoItems: [PhotosPickerItem] = []
+    @State private var isScrolledToBottom = true
     @State private var lastScrollTime: Date = Date()
+    @State private var imageItems: [ImagePreviewItem] = []
     
     // 缓存计算的高度以避免频繁重新计算
     @State private var cachedTextEditorHeight: CGFloat = 37 // 单行默认高度
     @State private var lastInputText: String = ""
+    
+    @FocusState private var isInputFocused: Bool
+    @State private var scrollViewProxy: ScrollViewProxy?
     
     // 修复MainActor初始化问题
     init(viewModel: ChatViewModel? = nil) {
@@ -122,8 +300,6 @@ struct ChatView: View {
             }
         }
     }
-    
-    @State private var scrollViewProxy: ScrollViewProxy?
     
     var body: some View {
         VStack(spacing: 0) {
@@ -178,42 +354,8 @@ struct ChatView: View {
             Divider()
             
             // 如果有选择的图片，显示预览和提示
-            if let userImage = viewModel.userImage {
-                HStack {
-                    Image(uiImage: userImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(height: 60)
-                        .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("图片已选择，尚未发送")
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                        
-                        Text("请输入提示词并点击发送按钮")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    
-                    Spacer()
-                    
-                    Button(action: {
-                        viewModel.userImage = nil
-                    }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.gray)
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-                .background(Color(.systemBackground))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.blue.opacity(0.3), lineWidth: 1)
-                        .padding(.horizontal, 8)
-                )
+            if !viewModel.userImages.isEmpty {
+                ImagePreviewArea(viewModel: viewModel, imageItems: $imageItems)
             }
             
             // 显示错误信息（如果有）
@@ -229,151 +371,38 @@ struct ChatView: View {
             }
             
             // 输入区域
-            HStack(alignment: .bottom, spacing: 10) {
-                // 图片选择按钮
-                PhotosPicker(selection: $photoItem, matching: .images) {
-                    Image(systemName: "photo")
-                        .font(.system(size: 22))
-                        .foregroundColor(.blue)
-                        .frame(width: 40, height: 40)
-                        .background(Color.blue.opacity(0.1))
-                        .clipShape(Circle())
-                }
-                .disabled(viewModel.isLoading)
-                .onChange(of: photoItem) { _, newItem in
-                    if let newItem {
-                        Task {
-                            if let data = try? await newItem.loadTransferable(type: Data.self),
-                               let image = UIImage(data: data) {
-                                await MainActor.run {
-                                    // 确保设置当前聊天列表ID
-                                    viewModel.geminiService.setChatList(id: viewModel.chatListId)
-                                    viewModel.setUserImage(image)
-                                    photoItem = nil
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // 消息输入框
-                ZStack(alignment: .leading) {
-                    if viewModel.inputMessage.isEmpty {
-                        Text("想要生成什么？")
-                            .foregroundColor(.gray.opacity(0.8))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 10)
-                    }
-                    
-                    TextEditor(text: $viewModel.inputMessage)
-                        .font(.system(size: 17))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 8)
-                        .frame(height: cachedTextEditorHeight)
-                        .background(Color.clear)
-                        .scrollContentBackground(.hidden)
-                        .disabled(viewModel.isLoading)
-                        .lineSpacing(2) // 设置行间距
-                        .onChange(of: viewModel.inputMessage) { oldValue, newValue in
-                            // 仅当文本发生显著变化时才重新计算高度（增加或减少5个字符）
-                            if abs(newValue.count - lastInputText.count) > 5 || 
-                               newValue.contains("\n") != lastInputText.contains("\n") {
-                                cachedTextEditorHeight = textEditorHeight(for: newValue)
-                                lastInputText = newValue
-                            }
-                        }
-                }
-                .padding(8)
-                .background(Color(.systemGray6))
-                .cornerRadius(20)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20)
-                        .stroke(isInputFocused ? Color.blue.opacity(0.5) : Color.clear, lineWidth: 1.5)
-                )
-                
-                // 加载指示器或发送按钮
-                if viewModel.isLoading {
-                    ProgressView()
-                        .frame(width: 40, height: 40)
-                } else {
-                    Button(action: {
-                        isInputFocused = false
-                        Task {
-                            await viewModel.sendMessage()
-                        }
-                    }) {
-                        ZStack {
-                            // 背景圆形
-                            Circle()
-                                .fill(viewModel.inputMessage.isEmpty && viewModel.userImage == nil 
-                                      ? Color.gray.opacity(0.3) 
-                                      : Color.blue)
-                                .frame(width: 40, height: 40)
-                            
-                            // 图标
-                            if viewModel.userImage != nil {
-                                // 如果有图片，显示特殊图标
-                                Image(systemName: "paperplane.fill")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 18, height: 18)
-                                    .foregroundColor(.white)
-                            } else {
-                                // 普通发送按钮
-                                Image(systemName: "arrow.up")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 18, height: 18)
-                                    .foregroundColor(.white)
-                            }
-                        }
-                    }
-                    .disabled(viewModel.inputMessage.isEmpty && viewModel.userImage == nil)
-                }
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 10)
-            .background(Color(.systemBackground))
-            // 移除不必要的动画
-            .animation(nil, value: viewModel.isLoading)
+            ChatInputView(
+                viewModel: viewModel,
+                photoItems: $photoItems,
+                imageItems: $imageItems,
+                isInputFocused: _isInputFocused,
+                cachedTextEditorHeight: $cachedTextEditorHeight,
+                lastInputText: $lastInputText
+            )
         }
         .background(Color(.secondarySystemBackground))
-    }
-    
-    // 计算输入框高度
-    private func textEditorHeight(for text: String) -> CGFloat {
-        let width = UIScreen.main.bounds.width - 120 // 减去左右边距和其他控件的宽度
-        
-        let font = UIFont.systemFont(ofSize: 17) // 使用标准字体大小
-        let lineHeight: CGFloat = font.lineHeight // 获取字体的行高
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 2 // 设置行间距
-        
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .paragraphStyle: paragraphStyle
-        ]
-        
-        let constraintRect = CGSize(width: width, height: .greatestFiniteMagnitude)
-        let boundingBox = text.boundingRect(
-            with: constraintRect,
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: attributes,
-            context: nil
-        )
-        
-        let height = ceil(boundingBox.height)
-        let minHeight: CGFloat = lineHeight + 24 // 单行文本高度 + 上下内边距
-        return max(minHeight, min(height + 24, 120)) // 基础高度为单行高度，最大120，上下各加12点内边距
-    }
-}
-
-// 添加一个视图修饰符来条件性地禁用动画
-extension View {
-    func animationsDisabled(_ disabled: Bool) -> some View {
-        self.transaction { transaction in
-            if disabled {
-                transaction.animation = nil
+        .onChange(of: photoItems) { _, newItems in
+            if !newItems.isEmpty {
+                Task {
+                    // 处理每一个选择的图片
+                    for item in newItems {
+                        if let data = try? await item.loadTransferable(type: Data.self),
+                           let image = UIImage(data: data) {
+                            await MainActor.run {
+                                // 确保设置当前聊天列表ID
+                                viewModel.geminiService.setChatList(id: viewModel.chatListId)
+                                viewModel.setUserImage(image)
+                                // 添加新的图片项到 imageItems 数组
+                                let newItem = ImagePreviewItem(id: UUID(), image: image)
+                                imageItems.append(newItem)
+                            }
+                        }
+                    }
+                    // 清空选择器
+                    await MainActor.run {
+                        photoItems = []
+                    }
+                }
             }
         }
     }
@@ -1058,6 +1087,17 @@ struct ScrollViewOffsetPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+// 添加一个视图修饰符来条件性地禁用动画
+extension View {
+    func animationsDisabled(_ disabled: Bool) -> some View {
+        self.transaction { transaction in
+            if disabled {
+                transaction.animation = nil
+            }
+        }
     }
 }
 

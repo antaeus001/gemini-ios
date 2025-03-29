@@ -8,7 +8,7 @@ class ChatViewModel: ObservableObject {
     @Published var inputMessage: String = ""
     @Published var isLoading: Bool = false
     @Published var error: String? = nil
-    @Published var userImage: UIImage? = nil
+    @Published var userImages: [UIImage] = [] // 修改为数组以支持多张图片
     
     var currentlyGeneratingMessage: ChatMessage? = nil
     let geminiService = GeminiService.shared
@@ -116,7 +116,7 @@ class ChatViewModel: ObservableObject {
     
     // 设置用户选择的图片
     func setUserImage(_ image: UIImage) {
-        self.userImage = image
+        self.userImages.append(image)
         
         // 不再立即添加图片到聊天界面，而是等到用户点击发送按钮时才添加
         objectWillChange.send()  // 确保触发UI更新
@@ -124,7 +124,7 @@ class ChatViewModel: ObservableObject {
     
     // 上传用户选择的图片
     func uploadUserImage() async -> String? {
-        guard let image = userImage else { return nil }
+        guard let image = userImages.first else { return nil }
         
         // 设置加载状态
         isLoading = true
@@ -192,7 +192,7 @@ class ChatViewModel: ObservableObject {
             currentlyGeneratingMessage = nil
             
             // 清除用户图片
-            userImage = nil
+            userImages.removeAll()
             objectWillChange.send()  // 确保UI更新
             
         } catch {
@@ -217,9 +217,9 @@ class ChatViewModel: ObservableObject {
         objectWillChange.send()  // 确保UI更新加载状态
     }
     
-    // 发送带图片的消息
-    func sendMessageWithImage(prompt: String, savedImage: UIImage?, useImageUpload: Bool = true) async {
-        guard let image = savedImage else { return }
+    // 发送带多张图片的消息（支持单张和多张图片）
+    func sendMessageWithImages(prompt: String, savedImages: [UIImage], useImageUpload: Bool = true) async {
+        guard !savedImages.isEmpty else { return }
         
         // 确保设置了当前聊天列表ID
         geminiService.setChatList(id: chatListId)
@@ -242,31 +242,41 @@ class ChatViewModel: ObservableObject {
         error = nil
         
         do {
-            // 如果需要上传图片，先上传获取URL
+            // 如果需要上传图片，先上传获取URLs
             if useImageUpload {
-                // 使用传入的图片进行上传，而不是userImage
-                do {
-                    let imageUrl = try await ImageUploader.shared.uploadImage(image)
-                    print("已获取图片URL: \(imageUrl)，使用URL发送请求")
-                    
-                    // 使用URL发送请求
-                    try await geminiService.generateContentWithImageUrl(prompt: prompt, imageUrl: imageUrl) { [weak self] contentItem in
-                        guard let self = self else { return }
-                        
-                        // 捕获任何处理过程中的错误
-                        do {
-                            // 使用handleContentUpdate处理内容项
-                            self.handleContentUpdate(contentItem)
-                        } catch {
-                            print("处理内容更新时出错: \(error.localizedDescription)")
-                        }
+                // 处理所有图片，获取URL列表
+                var imageUrls: [String] = []
+                
+                for (index, image) in savedImages.enumerated() {
+                    do {
+                        let imageUrl = try await ImageUploader.shared.uploadImage(image)
+                        imageUrls.append(imageUrl)
+                        print("已获取图片\(index+1)URL: \(imageUrl)")
+                    } catch {
+                        print("上传图片\(index+1)失败: \(error.localizedDescription)")
+                        // 继续处理其他图片，即使有一些上传失败
                     }
-                } catch {
-                    throw NSError(domain: "ChatViewModel", code: 1001, userInfo: [NSLocalizedDescriptionKey: "无法上传图片: \(error.localizedDescription)"])
+                }
+                
+                if imageUrls.isEmpty {
+                    throw NSError(domain: "ChatViewModel", code: 1001, userInfo: [NSLocalizedDescriptionKey: "所有图片上传失败"])
+                }
+                
+                // 使用URLs列表发送请求
+                try await geminiService.generateContentWithMultipleImageUrls(prompt: prompt, imageUrls: imageUrls) { [weak self] contentItem in
+                    guard let self = self else { return }
+                    
+                    // 捕获任何处理过程中的错误
+                    do {
+                        // 使用handleContentUpdate处理内容项
+                        self.handleContentUpdate(contentItem)
+                    } catch {
+                        print("处理内容更新时出错: \(error.localizedDescription)")
+                    }
                 }
             } else {
-                // 使用base64方式（不推荐使用此方式）
-                try await geminiService.generateContentWithImage(prompt: prompt, image: image, useImageUpload: false) { [weak self] contentItem in
+                // 使用base64方式（不推荐使用此方式）- 处理所有图片
+                try await geminiService.generateContentWithMultipleImages(prompt: prompt, images: savedImages, useImageUpload: false) { [weak self] contentItem in
                     guard let self = self else { return }
                     
                     // 捕获任何处理过程中的错误
@@ -287,7 +297,7 @@ class ChatViewModel: ObservableObject {
             currentlyGeneratingMessage = nil
             
             // 清除用户图片
-            userImage = nil
+            userImages.removeAll()
             objectWillChange.send()  // 确保UI更新
             
         } catch {
@@ -312,94 +322,15 @@ class ChatViewModel: ObservableObject {
         objectWillChange.send()  // 确保UI更新加载状态
     }
     
-    // 通用的生成内容聊天方法
-    func startGenerationChat(prompt: String) async {
-        // 确保设置了当前聊天列表ID
-        geminiService.setChatList(id: chatListId)
-        
-        // 如果有用户图片，则调用带图片的方法
-        if let image = userImage {
-            // 保存图片引用
-            let tempImage = image
-            // 立即清除图片预览
-            userImage = nil
-            objectWillChange.send()
-            
-            // 使用保存的图片引用
-            await sendMessageWithImage(prompt: prompt, savedImage: tempImage)
-            return
-        }
-        
-        // 清除现有消息
-        messages.removeAll()
-        objectWillChange.send()  // 确保UI更新
-        
-        // 添加用户消息到UI
-        let userMessage = ChatMessage(role: .user, content: .text(prompt))
-        messages.append(userMessage)
-        
-        // 创建一个初始的助手消息，使用空的混合内容数组
-        let initialAssistantMessage = ChatMessage(role: .assistant, content: .mixedContent([]))
-        initialAssistantMessage.isGenerating = true
-        currentlyGeneratingMessage = initialAssistantMessage
-        messages.append(initialAssistantMessage)
-        objectWillChange.send()  // 显式触发UI更新
-        
-        isLoading = true
-        error = nil
-        
-        do {
-            // 重置GeminiService的对话历史（因为这是开始新的对话）
-            geminiService.clearChatHistory()
-            
-            // 使用流式API
-            try await geminiService.generateContent(prompt: prompt) { [weak self] contentItem in
-                guard let self = self else { return }
-                
-                Task { @MainActor in  // 确保在主线程上处理UI更新
-                    // 使用handleContentUpdate处理内容项
-                    self.handleContentUpdate(contentItem)
-                }
-            }
-            
-            // 完成生成后，设置为非生成状态
-            if let index = messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id }) {
-                messages[index].isGenerating = false
-                objectWillChange.send()  // 显式触发UI更新
-            }
-            currentlyGeneratingMessage = nil
-            
-        } catch {
-            self.error = error.localizedDescription
-            print("API调用错误: \(error.localizedDescription)")
-            
-            // 移除正在生成的空消息
-            if let lastMessage = messages.last, lastMessage.id == currentlyGeneratingMessage?.id {
-                if case .mixedContent(let items) = lastMessage.content, items.isEmpty {
-                    messages.removeLast()
-                }
-            }
-            
-            // 添加一个友好的错误消息
-            let assistantMessage = ChatMessage(role: .assistant, content: .text("很抱歉，处理您的请求时遇到问题。错误信息：\(error.localizedDescription)"))
-            messages.append(assistantMessage)
-            currentlyGeneratingMessage = nil
-            objectWillChange.send()  // 显式触发UI更新
-        }
-        
-        isLoading = false
-        objectWillChange.send()  // 确保UI更新加载状态
-    }
-    
     // 发送消息
     func sendMessage() async {
-        guard !inputMessage.isEmpty || userImage != nil else { return }
+        guard !inputMessage.isEmpty || !userImages.isEmpty else { return }
         
         // 确保设置了当前聊天列表ID
         geminiService.setChatList(id: chatListId)
         
         // 保存图片的临时变量
-        let tempImage = userImage
+        let tempImages = userImages
         // 保存输入框内容
         let messageToSend = inputMessage
         
@@ -408,18 +339,18 @@ class ChatViewModel: ObservableObject {
         objectWillChange.send()  // 添加这一行确保UI立即更新输入框
         
         // 如果有用户图片，先将图片添加到聊天列表
-        if let image = tempImage {
+        for image in tempImages {
             let userImageMessage = ChatMessage(role: .user, content: .image(image, UUID()))
             messages.append(userImageMessage)
         }
         
-        // 在这里立即清除userImage，使预览区域消失
-        userImage = nil
+        // 在这里立即清除userImages，使预览区域消失
+        userImages.removeAll()
         objectWillChange.send()  // 确保UI更新
         
         // 如果有用户图片，则调用带图片的方法
-        if tempImage != nil {
-            await sendMessageWithImage(prompt: messageToSend, savedImage: tempImage)
+        if !tempImages.isEmpty {
+            await sendMessageWithImages(prompt: messageToSend, savedImages: tempImages)
             objectWillChange.send()  // 确保UI更新
             return
         }
@@ -703,6 +634,85 @@ class ChatViewModel: ObservableObject {
         } catch {
             print("加载图片出错: \(error.localizedDescription)")
         }
+    }
+    
+    // 通用的生成内容聊天方法
+    func startGenerationChat(prompt: String) async {
+        // 确保设置了当前聊天列表ID
+        geminiService.setChatList(id: chatListId)
+        
+        // 如果有用户图片，则调用带图片的方法
+        if !userImages.isEmpty {
+            // 保存图片引用
+            let tempImages = userImages
+            // 立即清除图片预览
+            userImages.removeAll()
+            objectWillChange.send()
+            
+            // 使用保存的图片引用
+            await sendMessageWithImages(prompt: prompt, savedImages: tempImages)
+            return
+        }
+        
+        // 清除现有消息
+        messages.removeAll()
+        objectWillChange.send()  // 确保UI更新
+        
+        // 添加用户消息到UI
+        let userMessage = ChatMessage(role: .user, content: .text(prompt))
+        messages.append(userMessage)
+        
+        // 创建一个初始的助手消息，使用空的混合内容数组
+        let initialAssistantMessage = ChatMessage(role: .assistant, content: .mixedContent([]))
+        initialAssistantMessage.isGenerating = true
+        currentlyGeneratingMessage = initialAssistantMessage
+        messages.append(initialAssistantMessage)
+        objectWillChange.send()  // 显式触发UI更新
+        
+        isLoading = true
+        error = nil
+        
+        do {
+            // 重置GeminiService的对话历史（因为这是开始新的对话）
+            geminiService.clearChatHistory()
+            
+            // 使用流式API
+            try await geminiService.generateContent(prompt: prompt) { [weak self] contentItem in
+                guard let self = self else { return }
+                
+                Task { @MainActor in  // 确保在主线程上处理UI更新
+                    // 使用handleContentUpdate处理内容项
+                    self.handleContentUpdate(contentItem)
+                }
+            }
+            
+            // 完成生成后，设置为非生成状态
+            if let index = messages.firstIndex(where: { $0.id == currentlyGeneratingMessage?.id }) {
+                messages[index].isGenerating = false
+                objectWillChange.send()  // 显式触发UI更新
+            }
+            currentlyGeneratingMessage = nil
+            
+        } catch {
+            self.error = error.localizedDescription
+            print("API调用错误: \(error.localizedDescription)")
+            
+            // 移除正在生成的空消息
+            if let lastMessage = messages.last, lastMessage.id == currentlyGeneratingMessage?.id {
+                if case .mixedContent(let items) = lastMessage.content, items.isEmpty {
+                    messages.removeLast()
+                }
+            }
+            
+            // 添加一个友好的错误消息
+            let assistantMessage = ChatMessage(role: .assistant, content: .text("很抱歉，处理您的请求时遇到问题。错误信息：\(error.localizedDescription)"))
+            messages.append(assistantMessage)
+            currentlyGeneratingMessage = nil
+            objectWillChange.send()  // 显式触发UI更新
+        }
+        
+        isLoading = false
+        objectWillChange.send()  // 确保UI更新加载状态
     }
 }
 
