@@ -218,8 +218,8 @@ class ChatViewModel: ObservableObject {
     }
     
     // 发送带图片的消息
-    func sendMessageWithImage(prompt: String, useImageUpload: Bool = true) async {
-        guard let image = userImage else { return }
+    func sendMessageWithImage(prompt: String, savedImage: UIImage?, useImageUpload: Bool = true) async {
+        guard let image = savedImage else { return }
         
         // 确保设置了当前聊天列表ID
         geminiService.setChatList(id: chatListId)
@@ -244,23 +244,25 @@ class ChatViewModel: ObservableObject {
         do {
             // 如果需要上传图片，先上传获取URL
             if useImageUpload {
-                guard let imageUrl = await uploadUserImage() else {
-                    throw NSError(domain: "ChatViewModel", code: 1001, userInfo: [NSLocalizedDescriptionKey: "无法上传图片，请稍后重试"])
-                }
-                
-                print("已获取图片URL: \(imageUrl)，使用URL发送请求")
-                
-                // 使用URL发送请求
-                try await geminiService.generateContentWithImageUrl(prompt: prompt, imageUrl: imageUrl) { [weak self] contentItem in
-                    guard let self = self else { return }
+                // 使用传入的图片进行上传，而不是userImage
+                do {
+                    let imageUrl = try await ImageUploader.shared.uploadImage(image)
+                    print("已获取图片URL: \(imageUrl)，使用URL发送请求")
                     
-                    // 捕获任何处理过程中的错误
-                    do {
-                        // 使用handleContentUpdate处理内容项
-                        self.handleContentUpdate(contentItem)
-                    } catch {
-                        print("处理内容更新时出错: \(error.localizedDescription)")
+                    // 使用URL发送请求
+                    try await geminiService.generateContentWithImageUrl(prompt: prompt, imageUrl: imageUrl) { [weak self] contentItem in
+                        guard let self = self else { return }
+                        
+                        // 捕获任何处理过程中的错误
+                        do {
+                            // 使用handleContentUpdate处理内容项
+                            self.handleContentUpdate(contentItem)
+                        } catch {
+                            print("处理内容更新时出错: \(error.localizedDescription)")
+                        }
                     }
+                } catch {
+                    throw NSError(domain: "ChatViewModel", code: 1001, userInfo: [NSLocalizedDescriptionKey: "无法上传图片: \(error.localizedDescription)"])
                 }
             } else {
                 // 使用base64方式（不推荐使用此方式）
@@ -316,8 +318,15 @@ class ChatViewModel: ObservableObject {
         geminiService.setChatList(id: chatListId)
         
         // 如果有用户图片，则调用带图片的方法
-        if userImage != nil {
-            await sendMessageWithImage(prompt: prompt)
+        if let image = userImage {
+            // 保存图片引用
+            let tempImage = image
+            // 立即清除图片预览
+            userImage = nil
+            objectWillChange.send()
+            
+            // 使用保存的图片引用
+            await sendMessageWithImage(prompt: prompt, savedImage: tempImage)
             return
         }
         
@@ -389,16 +398,22 @@ class ChatViewModel: ObservableObject {
         // 确保设置了当前聊天列表ID
         geminiService.setChatList(id: chatListId)
         
+        // 保存图片的临时变量
+        let tempImage = userImage
+        
         // 如果有用户图片，先将图片添加到聊天列表
-        if let image = userImage {
+        if let image = tempImage {
             let userImageMessage = ChatMessage(role: .user, content: .image(image, UUID()))
             messages.append(userImageMessage)
-            objectWillChange.send()  // 确保UI更新
         }
         
+        // 在这里立即清除userImage，使预览区域消失
+        userImage = nil
+        objectWillChange.send()  // 确保UI更新
+        
         // 如果有用户图片，则调用带图片的方法
-        if userImage != nil {
-            await sendMessageWithImage(prompt: inputMessage)
+        if tempImage != nil {
+            await sendMessageWithImage(prompt: inputMessage, savedImage: tempImage)
             inputMessage = ""
             objectWillChange.send()  // 确保UI更新
             return
