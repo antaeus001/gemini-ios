@@ -400,6 +400,12 @@ class ChatViewModel: ObservableObject {
         
         // 保存图片的临时变量
         let tempImage = userImage
+        // 保存输入框内容
+        let messageToSend = inputMessage
+        
+        // 立即清空输入框，确保UI立刻更新
+        inputMessage = ""
+        objectWillChange.send()  // 添加这一行确保UI立即更新输入框
         
         // 如果有用户图片，先将图片添加到聊天列表
         if let image = tempImage {
@@ -413,15 +419,10 @@ class ChatViewModel: ObservableObject {
         
         // 如果有用户图片，则调用带图片的方法
         if tempImage != nil {
-            await sendMessageWithImage(prompt: inputMessage, savedImage: tempImage)
-            inputMessage = ""
+            await sendMessageWithImage(prompt: messageToSend, savedImage: tempImage)
             objectWillChange.send()  // 确保UI更新
             return
         }
-        
-        let messageToSend = inputMessage
-        inputMessage = ""
-        objectWillChange.send()  // 确保UI更新输入框
         
         // 添加用户消息
         let userMessage = ChatMessage(role: .user, content: .text(messageToSend))
