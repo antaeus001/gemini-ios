@@ -853,7 +853,7 @@ struct ImageViewerSheet: View {
                         
                         Spacer()
                     }
-                    .padding(.top, geometry.safeAreaInsets.top + 10)
+                    .padding(.top, geometry.safeAreaInsets.top + 30)
                     
                     Spacer()
                 }
@@ -893,7 +893,7 @@ struct ImageViewerSheet: View {
                         }
                     }
                     .padding(.horizontal, 20)
-                    .padding(.bottom, geometry.safeAreaInsets.bottom + 10)
+                    .padding(.bottom, geometry.safeAreaInsets.bottom + 20)
                 }
             }
         }
