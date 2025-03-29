@@ -156,6 +156,8 @@ struct ChatInputView: View {
                     // 清空输入框和选择的图片在 Task 中执行
                     cachedTextEditorHeight = 37
                     isInputFocused = false
+                    // 确保清空预览图数组
+                    imageItems.removeAll()
                 }
             }) {
                 Image(systemName: "arrow.up.circle.fill")
@@ -228,9 +230,11 @@ struct ImagePreviewArea: View {
                             
                             Button(action: {
                                 // 找到要删除的图片在 viewModel.userImages 中的索引
-                                if let index = imageItems.firstIndex(where: { $0.id == item.id }),
-                                   index < viewModel.userImages.count {
-                                    viewModel.userImages.remove(at: index)
+                                if let index = imageItems.firstIndex(where: { $0.id == item.id }) {
+                                    // 确保索引有效
+                                    if index < viewModel.userImages.count {
+                                        viewModel.userImages.remove(at: index)
+                                    }
                                     imageItems.remove(at: index)
                                 }
                             }) {
