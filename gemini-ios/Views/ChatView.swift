@@ -187,9 +187,15 @@ struct ChatView: View {
                         .cornerRadius(8)
                         .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
                     
-                    Text("请输入提示词来编辑此图片")
-                        .font(.caption)
-                        .foregroundColor(.gray)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("图片已选择，尚未发送")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                        
+                        Text("请输入提示词并点击发送按钮")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
                     
                     Spacer()
                     
@@ -203,6 +209,11 @@ struct ChatView: View {
                 .padding(.horizontal)
                 .padding(.vertical, 8)
                 .background(Color(.systemBackground))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                        .padding(.horizontal, 8)
+                )
             }
             
             // 显示错误信息（如果有）
@@ -291,10 +302,31 @@ struct ChatView: View {
                             await viewModel.sendMessage()
                         }
                     }) {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .resizable()
-                            .frame(width: 40, height: 40)
-                            .foregroundColor(viewModel.inputMessage.isEmpty && viewModel.userImage == nil ? .gray : .blue)
+                        ZStack {
+                            // 背景圆形
+                            Circle()
+                                .fill(viewModel.inputMessage.isEmpty && viewModel.userImage == nil 
+                                      ? Color.gray.opacity(0.3) 
+                                      : Color.blue)
+                                .frame(width: 40, height: 40)
+                            
+                            // 图标
+                            if viewModel.userImage != nil {
+                                // 如果有图片，显示特殊图标
+                                Image(systemName: "paperplane.fill")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 18, height: 18)
+                                    .foregroundColor(.white)
+                            } else {
+                                // 普通发送按钮
+                                Image(systemName: "arrow.up")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 18, height: 18)
+                                    .foregroundColor(.white)
+                            }
+                        }
                     }
                     .disabled(viewModel.inputMessage.isEmpty && viewModel.userImage == nil)
                 }

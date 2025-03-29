@@ -118,9 +118,7 @@ class ChatViewModel: ObservableObject {
     func setUserImage(_ image: UIImage) {
         self.userImage = image
         
-        // 添加图片到聊天界面
-        let userMessage = ChatMessage(role: .user, content: .image(image, UUID()))
-        messages.append(userMessage)
+        // 不再立即添加图片到聊天界面，而是等到用户点击发送按钮时才添加
         objectWillChange.send()  // 确保触发UI更新
     }
     
@@ -386,10 +384,17 @@ class ChatViewModel: ObservableObject {
     
     // 发送消息
     func sendMessage() async {
-        guard !inputMessage.isEmpty else { return }
+        guard !inputMessage.isEmpty || userImage != nil else { return }
         
         // 确保设置了当前聊天列表ID
         geminiService.setChatList(id: chatListId)
+        
+        // 如果有用户图片，先将图片添加到聊天列表
+        if let image = userImage {
+            let userImageMessage = ChatMessage(role: .user, content: .image(image, UUID()))
+            messages.append(userImageMessage)
+            objectWillChange.send()  // 确保UI更新
+        }
         
         // 如果有用户图片，则调用带图片的方法
         if userImage != nil {
